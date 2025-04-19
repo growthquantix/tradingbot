@@ -75,7 +75,10 @@ app = FastAPI(
 # ✅ Secure CORS Middleware Setup
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Allow local development frontend
-    "https://resplendent-shortbread-e830d3.netlify.app",  # Allow Netlify-hosted frontend
+    "https://resplendent-shortbread-e830d3.netlify.app",
+    "https://growthquantix.com",  # frontend
+    "https://www.growthquantix.com",
+    "https://api.growthquantix.com",  # Allow Netlify-hosted frontend
 ]
 
 app.add_middleware(

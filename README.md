@@ -3,11 +3,6 @@
 A full-stack trading bot application for configuring broker accounts, monitoring live market data, and automating trading sessions. This repository contains both a Python backend (using FastAPI) and a React/Material‑UI frontend.
 
 [![Netlify Status](https://api.netlify.com/api/v1/badges/c269af19-e741-48b2-84e2-236f5a75a251/deploy-status)](https://app.netlify.com/sites/resplendent-shortbread-e830d3/deploys)
-[![CodeFactor](https://www.codefactor.io/repository/github/andrewjonesdev/tr) badge](https://www.codefactor.io/repository/github/andrewjonesdev/tr)  
-[![CodeFactor](https://www.codefactor.io/repository/github/andrewjonesdev/tr)](https://www.codefactor.io/repository/github/andrewjonesdev/tr)
-[![CodeFactor](https://www.codefactor.io/repository/github/andrewjonesdev/tr)](https://www.codefactor.io/repository/github/andrewjonesdev/tr)
-[![CodeFactor](https://www.codefactor.io/repository/github/andrewjonesdev/tr)](https://www.codefactor.io/repository/github/andrewjonesdev/tr)
-[![CodeFactor](https://www.codefactor.io/repository/github/andrewjonesdev/tr)](https://www.codefactor.io/repository/github/andrewjonesdev/tr)
 
 ## Table of Contents
 
@@ -46,5 +41,3 @@ A full-stack trading bot application for configuring broker accounts, monitoring
 1. Navigate to the backend directory:
    bash
    cd /path/to/tradingapp-main/tradingapp-main
-
-[![Netlify Status](https://api.netlify.com/api/v1/badges/c269af19-e741-48b2-84e2-236f5a75a251/deploy-status)](https://app.netlify.com/sites/resplendent-shortbread-e830d3/deploys)
