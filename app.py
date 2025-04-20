@@ -35,7 +35,7 @@ from services.trailing_stop_loss import update_trailing_stop_loss
 from ws_router.upstox_ltp_ws import ws_upstox_router
 from router.market_ws import router as market_ws_router
 from router.backtest_router import backtesting_router
-from router.stock_router import router
+from router.stock_router import router as stock_router
 
 # Load environment variables
 load_dotenv()
@@ -50,18 +50,73 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles application startup and shutdown events."""
-    logger.info("Starting Trading Application...")
+    logger.info("🚀 Starting Trading Application...")
 
     try:
-        # Initialize database connection
         db = next(get_db())
-        logger.info("Trading bot initialized successfully.")
+        logger.info("✅ DB session initialized.")
     except Exception as e:
-        logger.error(f"Startup error: {str(e)}")
+        logger.error(f"❌ Startup error: {str(e)}")
         raise
 
+    # ✅ Define background jobs
+    def update_all_stop_losses():
+        db = SessionLocal()
+        users = db.query(TradePerformance.user_id).distinct().all()
+        for user in users:
+            trades = (
+                db.query(TradePerformance)
+                .filter(
+                    TradePerformance.user_id == user[0],
+                    TradePerformance.status == "OPEN",
+                )
+                .all()
+            )
+            for trade in trades:
+                calculate_dynamic_stop_loss(user[0], trade.symbol, db)
+        db.close()
+
+    def run_trailing_stop_loss_updates():
+        db = SessionLocal()
+        users = db.query(TradePerformance.user_id).distinct().all()
+        for user in users:
+            trades = (
+                db.query(TradePerformance)
+                .filter(
+                    TradePerformance.user_id == user[0],
+                    TradePerformance.status == "OPEN",
+                )
+                .all()
+            )
+            for trade in trades:
+                update_trailing_stop_loss(user[0], trade.symbol, db)
+        db.close()
+
+    def run_auto_trading():
+        db = SessionLocal()
+        users = db.query(TradeSignal.user_id).distinct().all()
+        for user in users:
+            auto_execute_trades(user[0], db)
+        db.close()
+
+    def start_background_jobs():
+        schedule.every(1).minutes.do(update_all_stop_losses)
+        schedule.every(1).minutes.do(run_trailing_stop_loss_updates)
+        schedule.every(1).minutes.do(run_auto_trading)
+
+        def scheduler_loop():
+            while True:
+                schedule.run_pending()
+                time.sleep(1)
+
+        thread = threading.Thread(target=scheduler_loop, daemon=True)
+        thread.start()
+        logger.info("🟢 Background schedulers started.")
+
+    start_background_jobs()
+
     yield
-    logger.info("Shutting down application...")
+    logger.info("🛑 Shutting down Trading Bot...")
 
 
 # Initialize FastAPI App
@@ -72,34 +127,31 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ✅ Secure CORS Middleware Setup
+# ✅ CORS Middleware
 ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # Allow local development frontend
+    "http://localhost:3000",
     "https://resplendent-shortbread-e830d3.netlify.app",
-    "https://growthquantix.com",  # frontend
+    "https://growthquantix.com",
     "https://www.growthquantix.com",
-    "https://api.growthquantix.com",  # Allow Netlify-hosted frontend
+    "https://api.growthquantix.com",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,  # ✅ Use specific origins instead of "*"
-    allow_credentials=True,  # ✅ Required for sending cookies & Authorization headers
-    allow_methods=["*"],  # ✅ Allow all methods (GET, POST, PUT, DELETE, OPTIONS)
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
     allow_headers=[
         "Authorization",
         "Content-Type",
         "Accept",
         "Refresh-Token",
         "X-CSRFToken",
-    ],  # ✅ Include Refresh-Token
-    expose_headers=[
-        "Content-Disposition",
-        "Authorization",
-    ],  # ✅ Expose required headers for downloads & auth
+    ],
+    expose_headers=["Content-Disposition", "Authorization"],
 )
 
-# ✅ Register FastAPI Routes Before Initializing SocketIO
+# ✅ Include Routes
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(broker_router, prefix="/api/broker", tags=["Broker API"])
 app.include_router(user_router, prefix="/api/user", tags=["User Profile"])
@@ -115,128 +167,32 @@ app.include_router(stop_loss_router.router)
 app.include_router(ws_upstox_router)
 app.include_router(market_ws_router)
 app.include_router(backtesting_router, prefix="/api/backtesting")
-app.include_router(router)
-app.include_router(router)
+app.include_router(stock_router)
 
 
-# ✅ Background task for AI stop-loss updates
-def update_all_stop_losses():
-    """Update AI stop-loss dynamically every minute for open trades."""
-    db = SessionLocal()
-    users = db.query(TradePerformance.user_id).distinct().all()
-
-    for user in users:
-        trades = (
-            db.query(TradePerformance)
-            .filter(
-                TradePerformance.user_id == user[0], TradePerformance.status == "OPEN"
-            )
-            .all()
-        )
-        for trade in trades:
-            calculate_dynamic_stop_loss(user[0], trade.symbol, db)
-
-    db.close()
-
-
-# ✅ Schedule stop-loss updates every minute
-def run_scheduler():
-    """Runs the scheduler in a separate thread."""
-    schedule.every(1).minutes.do(update_all_stop_losses)
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-
-# ✅ Start background scheduler when the server starts
-@app.on_event("startup")
-def start_background_scheduler():
-    thread = threading.Thread(target=run_scheduler, daemon=True)
-    thread.start()
-
-
-# ✅ Run AI-Based Trailing Stop-Loss Update
-def run_trailing_stop_loss_updates():
-    """Updates trailing stop-loss every minute for all trades."""
-    db = SessionLocal()
-    users = db.query(TradePerformance.user_id).distinct().all()
-
-    for user in users:
-        trades = (
-            db.query(TradePerformance)
-            .filter(
-                TradePerformance.user_id == user[0], TradePerformance.status == "OPEN"
-            )
-            .all()
-        )
-        for trade in trades:
-            update_trailing_stop_loss(user[0], trade.symbol, db)
-
-    db.close()
-
-
-def start_trailing_stop_task():
-    schedule.every(1).minutes.do(run_trailing_stop_loss_updates)
-    while True:
-        schedule.run_pending()
-
-
-thread = threading.Thread(target=start_trailing_stop_task, daemon=True)
-thread.start()
-
-
-# ✅ Background Auto-Trade Execution Task
-def run_auto_trading():
-    db = SessionLocal()
-    users = db.query(TradeSignal.user_id).distinct().all()
-
-    for user in users:
-        auto_execute_trades(user[0], db)
-
-    db.close()
-
-
-# ✅ Run every minute
-def start_auto_trading():
-    schedule.every(1).minutes.do(run_auto_trading)
-    while True:
-        schedule.run_pending()
-
-
-thread = threading.Thread(target=start_auto_trading, daemon=True)
-thread.start()
-
-
-# ✅ Debug Preflight Requests
+# ✅ Preflight handler for OPTIONS
 @app.options("/{full_path:path}")
 async def preflight_handler(full_path: str):
     return JSONResponse(content={"message": "Preflight OK"}, status_code=200)
 
 
-# ✅ Initialize SocketIO separately
+# ✅ SocketIO Initialization
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=ALLOWED_ORIGINS)
 sio_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 
-# ✅ Root API Endpoint
+# ✅ Root + Health
 @app.get("/")
 async def root():
-    return {
-        "status": "running",
-        "timestamp": datetime.now().isoformat(),
-    }
+    return {"status": "running", "timestamp": datetime.now().isoformat()}
 
 
-# ✅ API Health Check
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "ok",
-        "timestamp": datetime.now().isoformat(),
-    }
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 
-# ✅ Improved Global Exception Handler
+# ✅ Global Error Handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global error: {str(exc)}")
@@ -249,9 +205,9 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ✅ Start FastAPI Server
+# ✅ Run App
 if __name__ == "__main__":
-    logger.info("Starting FastAPI Trading Bot Server...")
+    logger.info("🚀 Launching Trading Bot Server...")
     uvicorn.run(
         "app:sio_app",
         host="0.0.0.0",
