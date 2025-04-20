@@ -29,9 +29,6 @@ from router.upstox_router import upstox_router
 from router.fyers_router import fyers_router
 from router.market_data_router import market_data_router
 from services import stop_loss_router
-from services.auto_trade_execution import auto_execute_trades
-from services.dynamic_stop_loss import calculate_dynamic_stop_loss
-from services.trailing_stop_loss import update_trailing_stop_loss
 from ws_router.upstox_ltp_ws import ws_upstox_router
 from router.market_ws import router as market_ws_router
 from router.backtest_router import backtesting_router
@@ -49,74 +46,21 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles application startup and shutdown events."""
     logger.info("🚀 Starting Trading Application...")
 
     try:
+        # DB initialization
         db = next(get_db())
         logger.info("✅ DB session initialized.")
-    except Exception as e:
-        logger.error(f"❌ Startup error: {str(e)}")
-        raise
 
-    # ✅ Define background jobs
-    def update_all_stop_losses():
-        db = SessionLocal()
-        users = db.query(TradePerformance.user_id).distinct().all()
-        for user in users:
-            trades = (
-                db.query(TradePerformance)
-                .filter(
-                    TradePerformance.user_id == user[0],
-                    TradePerformance.status == "OPEN",
-                )
-                .all()
-            )
-            for trade in trades:
-                calculate_dynamic_stop_loss(user[0], trade.symbol, db)
-        db.close()
-
-    def run_trailing_stop_loss_updates():
-        db = SessionLocal()
-        users = db.query(TradePerformance.user_id).distinct().all()
-        for user in users:
-            trades = (
-                db.query(TradePerformance)
-                .filter(
-                    TradePerformance.user_id == user[0],
-                    TradePerformance.status == "OPEN",
-                )
-                .all()
-            )
-            for trade in trades:
-                update_trailing_stop_loss(user[0], trade.symbol, db)
-        db.close()
-
-    def run_auto_trading():
-        db = SessionLocal()
-        users = db.query(TradeSignal.user_id).distinct().all()
-        for user in users:
-            auto_execute_trades(user[0], db)
-        db.close()
-
-    def start_background_jobs():
-        schedule.every(1).minutes.do(update_all_stop_losses)
-        schedule.every(1).minutes.do(run_trailing_stop_loss_updates)
-        schedule.every(1).minutes.do(run_auto_trading)
-
-        def scheduler_loop():
-            while True:
-                schedule.run_pending()
-                time.sleep(1)
-
-        thread = threading.Thread(target=scheduler_loop, daemon=True)
-        thread.start()
+        # Optional: start any background jobs here
         logger.info("🟢 Background schedulers started.")
-
-    start_background_jobs()
-
-    yield
-    logger.info("🛑 Shutting down Trading Bot...")
+        yield
+    except Exception as e:
+        logger.exception("🔥 Lifespan startup failed.")
+        raise e
+    finally:
+        logger.info("🛑 Lifespan shutdown complete.")
 
 
 # Initialize FastAPI App
