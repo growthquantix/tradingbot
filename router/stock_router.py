@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from collections import defaultdict
 
+from utils.instrument_key_cache import save_instrument_keys
+
 router = APIRouter()
 logger = logging.getLogger("stock_router")
 
@@ -116,11 +118,9 @@ def get_top_stock_details(request: Request):
     # ✅ Save instrument keys to file
     try:
         instrument_keys_list = sorted(list(instrument_keys_set))
-        instrument_keys_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(instrument_keys_file, "w", encoding="utf-8") as f:
-            json.dump(instrument_keys_list, f, indent=2)
+        save_instrument_keys(instrument_keys_list)
         logger.info(
-            f"💾 Saved {len(instrument_keys_list)} instrument keys to {instrument_keys_file}"
+            f"💾 Saved {len(instrument_keys_list)} instrument keys to /tmp/today_instrument_keys.json"
         )
     except Exception as e:
         logger.warning(f"⚠️ Failed to save instrument keys: {e}")

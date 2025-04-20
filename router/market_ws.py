@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from tempfile import gettempdir
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from jwt.exceptions import ExpiredSignatureError, DecodeError
 from services.auth_service import get_current_user
@@ -215,9 +216,12 @@ def parse_live_feed(raw_data: dict):
 
 
 def load_today_instrument_keys():
-    file_path = Path("data/today_instrument_keys.json")
+    file_path = Path(gettempdir()) / "today_instrument_keys.json"
+
     if not file_path.exists():
+        logger.warning("⚠️ Instrument keys file does not exist.")
         return []
+
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = json.load(f)
@@ -228,4 +232,5 @@ def load_today_instrument_keys():
                     return content.get("keys", [])
     except Exception as e:
         logger.warning(f"❌ Failed to load instrument keys: {e}")
+
     return []
