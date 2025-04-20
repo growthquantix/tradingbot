@@ -15,8 +15,6 @@ logger = logging.getLogger("stock_router")
 def get_top_stock_details(request: Request):
     top_stocks_path = Path("data/top_stocks.json")
     instrument_path = Path("data/upstox_instruments.json")
-    instrument_keys_file = Path("data/today_instrument_keys.json")
-
     if not top_stocks_path.exists() or not instrument_path.exists():
         logger.error("❌ Missing required JSON files.")
         return {"data": {}, "error": "Missing JSON files."}
