@@ -28,6 +28,10 @@ ALLOWED_ORIGINS = [
     "https://resplendent-shortbread-e830d3.netlify.app",  # ✅ Production Frontend
     "http://localhost:8000",  # ✅ Local Backend (FastAPI)
     "https://tradingbot-ttys.onrender.com",  # ✅ Production Backend
+    "https://growthquantix.com",  # ✅ Production Frontend
+    "https://www.growthquantix.com",  # ✅ Production Frontend
+    "https://api.growthquantix.com",  # ✅ Production Backend
+    "https://api.growthquantix.com/v1",  # ✅ Production Backend (API Version)
 ]
 
 
@@ -36,7 +40,9 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get("Origin", "")
-        logger.info(f"📌 Incoming request: {request.method} {request.url.path} from {origin}")
+        logger.info(
+            f"📌 Incoming request: {request.method} {request.url.path} from {origin}"
+        )
 
         # ✅ Handle CORS Preflight (OPTIONS Request)
         if request.method == "OPTIONS":
@@ -45,8 +51,12 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
             if origin in ALLOWED_ORIGINS:
                 response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
-            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type"
+            )
+            response.headers["Access-Control-Allow-Methods"] = (
+                "GET, POST, PUT, DELETE, OPTIONS"
+            )
             return response
 
         access_token = request.headers.get("Authorization")
@@ -55,7 +65,9 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
             access_token = access_token.split("Bearer ")[-1]
             try:
                 jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
-                logger.info(f"✅ Token successfully validated for request: {request.url.path}")
+                logger.info(
+                    f"✅ Token successfully validated for request: {request.url.path}"
+                )
             except jwt.ExpiredSignatureError:
                 logger.warning(f"⚠️ Token expired for request: {request.url.path}")
                 response = JSONResponse(
@@ -65,11 +77,17 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
                 if origin in ALLOWED_ORIGINS:
                     response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
-                response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE"
+                response.headers["Access-Control-Allow-Headers"] = (
+                    "Authorization, Content-Type"
+                )
+                response.headers["Access-Control-Allow-Methods"] = (
+                    "GET, POST, PUT, DELETE"
+                )
                 return response
             except jwt.PyJWTError as e:
-                logger.error(f"❌ Invalid Token Error: {str(e)} for request: {request.url.path}")
+                logger.error(
+                    f"❌ Invalid Token Error: {str(e)} for request: {request.url.path}"
+                )
                 response = JSONResponse(
                     status_code=401,
                     content={"detail": "Invalid token"},
@@ -81,7 +99,9 @@ class TokenRefreshMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         # ✅ Log Response Status
-        logger.info(f"📤 Response {response.status_code} for {request.method} {request.url.path}")
+        logger.info(
+            f"📤 Response {response.status_code} for {request.method} {request.url.path}"
+        )
 
         # ✅ Set Correct CORS Headers on Response
         if origin in ALLOWED_ORIGINS:
