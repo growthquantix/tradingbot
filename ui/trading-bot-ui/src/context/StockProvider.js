@@ -16,7 +16,9 @@ export const StockProvider = ({ children }) => {
         return;
       }
 
-      const res = await axios.get("http://localhost:8000/api/top-stocks"); // Replace with actual API
+      const res = await axios.get(
+        `${process.env.REACT_APP_API_URL}/api/top-stocks`
+      ); // Replace with actual API
       setStocks(res.data);
       sessionStorage.setItem("top_stocks", JSON.stringify(res.data));
     } catch (error) {
