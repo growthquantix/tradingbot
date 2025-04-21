@@ -65,6 +65,7 @@ def upstox_callback(code: str, state: str = None, db: Session = Depends(get_db))
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        # ✅ Retrieve existing broker config if present
         existing_config = (
             db.query(BrokerConfig)
             .filter(
@@ -74,10 +75,7 @@ def upstox_callback(code: str, state: str = None, db: Session = Depends(get_db))
             .first()
         )
 
-        client_id = existing_config.api_key
-        client_secret = existing_config.api_secret
-
-        # ✅ Retrieve credentials from temp store
+        # ✅ Retrieve credentials: from DB or temp store
         if existing_config:
             creds = {
                 "client_id": existing_config.api_key,
@@ -95,10 +93,8 @@ def upstox_callback(code: str, state: str = None, db: Session = Depends(get_db))
         )
         access_token_expiry = calculate_upstox_expiry()
 
-        # ✅ Check if broker config already exists
-
         if existing_config:
-            # Update existing config
+            # 🔄 Update existing config
             existing_config.access_token = token_response["access_token"]
             existing_config.api_key = creds["client_id"]
             existing_config.api_secret = creds["client_secret"]
@@ -151,7 +147,7 @@ def upstox_callback(code: str, state: str = None, db: Session = Depends(get_db))
 
     except Exception as e:
         logger.exception(f"❌ Upstox callback failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @upstox_router.get("/token")
