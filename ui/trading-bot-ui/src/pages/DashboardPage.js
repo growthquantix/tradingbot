@@ -228,13 +228,16 @@ const DashboardPage = () => {
       <Modal open={tokenExpired} onClose={() => {}}>
         <Box
           sx={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
             width: 400,
-            mx: "auto",
-            my: "20%",
             p: 4,
-            bgcolor: "white",
+            bgcolor: "background.paper",
             boxShadow: 24,
             borderRadius: 2,
+            textAlign: "center",
           }}
         >
           <Typography variant="h6" gutterBottom>
