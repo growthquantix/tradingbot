@@ -8,18 +8,52 @@ const PrivacyPolicyPage = () => {
         <Typography variant="h4" fontWeight="bold" gutterBottom>
           Privacy Policy
         </Typography>
+
         <Typography variant="body1" sx={{ mb: 2 }}>
-          We take your privacy seriously. Growth Quantix does not sell or share
-          your data with third parties without consent.
+          Growth Quantix is committed to protecting your personal information.
+          This policy explains how we collect, use, and safeguard your data.
         </Typography>
-        <Typography variant="body1" sx={{ mb: 2 }}>
-          We collect only essential information for account creation,
-          authentication, and trading functionalities. This data is stored
-          securely and encrypted.
-        </Typography>
-        <Typography variant="body1">
-          By using our platform, you agree to our data handling practices as
-          outlined here. For questions, contact privacy@growthquantix.com.
+
+        <ul>
+          <li>
+            <Typography variant="body2">
+              We collect only essential user data such as email, broker
+              credentials, and usage patterns.
+            </Typography>
+          </li>
+          <li>
+            <Typography variant="body2">
+              Your broker credentials are stored securely and used only to fetch
+              market data or place trades on your behalf.
+            </Typography>
+          </li>
+          <li>
+            <Typography variant="body2">
+              We do not share or sell your personal data with third parties.
+            </Typography>
+          </li>
+          <li>
+            <Typography variant="body2">
+              All data is encrypted in transit and at rest.
+            </Typography>
+          </li>
+          <li>
+            <Typography variant="body2">
+              You can request account deletion by emailing:{" "}
+              <a href="mailto:support@growthquantix.com">
+                support@growthquantix.com
+              </a>
+              .
+            </Typography>
+          </li>
+        </ul>
+
+        <Typography variant="body1" sx={{ mt: 2 }}>
+          For questions or concerns, contact{" "}
+          <a href="mailto:privacy@growthquantix.com">
+            privacy@growthquantix.com
+          </a>
+          .
         </Typography>
       </Container>
     </Box>
