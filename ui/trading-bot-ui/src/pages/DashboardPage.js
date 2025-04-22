@@ -151,9 +151,11 @@ const DashboardPage = () => {
         sx={{ color: theme.palette.text.primary }}
       >
         Market Status:{" "}
-        <strong style={{ color: marketStatus === "open" ? "green" : "red" }}>
-          {marketStatus === "open"
-            ? "Open ✅"
+        <strong
+          style={{ color: marketStatus === "normal_open" ? "green" : "red" }}
+        >
+          {marketStatus === "normal_open"
+            ? "Open"
             : marketStatus === "loading"
             ? "Loading..."
             : "Closed"}
