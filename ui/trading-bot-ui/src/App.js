@@ -27,6 +27,7 @@ import ContactPage from "./pages/ContactPage";
 import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import TermsPage from "./pages/TermsPage";
 import SecurityPage from "./pages/SecurityPage";
+import TermsModal from "./components/TermsModal";
 
 const App = () => {
   const [isLoggedIn, setIsLoggedIn] = useState(isAuthenticated());
@@ -41,6 +42,7 @@ const App = () => {
     <CustomThemeProvider>
       <CssBaseline />
       <Router>
+        <TermsModal />
         <Routes>
           <Route
             path="/"
