@@ -145,7 +145,7 @@ threadpoolctl==3.5.0
 tokenizers==0.21.0
 torch==2.6.0
 tqdm==4.67.1
-transformers==4.48.3
+transformers==4.50.0
 twilio==9.5.0
 Twisted==24.11.0
 txaio==23.1.1
