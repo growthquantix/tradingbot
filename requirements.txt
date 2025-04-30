@@ -9,7 +9,7 @@ anyio==4.8.0
 astunparse==1.6.3
 asyncio==3.4.3
 attrs==25.1.0
-autobahn==19.11.2
+autobahn==20.12.3
 Automat==24.8.1
 aws-lambda-powertools==1.25.5
 aws-xray-sdk==2.14.0
