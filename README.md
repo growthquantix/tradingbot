@@ -41,3 +41,4 @@ A full-stack trading bot application for configuring broker accounts, monitoring
 1. Navigate to the backend directory:
    bash
    cd /path/to/tradingapp-main/tradingapp-main
+<!-- test -->
