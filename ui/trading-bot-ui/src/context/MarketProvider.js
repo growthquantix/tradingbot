@@ -25,6 +25,11 @@ export const MarketProvider = ({ children }) => {
   const hasReceivedFeed = useRef(false);
   const reconnectTimeoutRef = useRef(null);
 
+  // Function to reset token expired state
+  const resetTokenExpired = () => {
+    setTokenExpired(false);
+  };
+
   const disconnectWebSocket = () => {
     if (globalWs) globalWs.close();
     if (globalPingInterval) clearInterval(globalPingInterval);
@@ -87,7 +92,9 @@ export const MarketProvider = ({ children }) => {
         const msg = JSON.parse(event.data);
 
         if (msg.type === "error" && msg.reason === "token_expired") {
+          // Always set tokenExpired to true when we get this message
           setTokenExpired(true);
+          console.log("❌ Token expired notification received");
           disconnectWebSocket();
           return;
         }
@@ -107,7 +114,10 @@ export const MarketProvider = ({ children }) => {
             const updates = { ...prev };
             Object.entries(feeds).forEach(([key, parsed]) => {
               if (parsed?.ltp !== undefined) {
-                updates[key.toUpperCase()] = {
+                const isIndexKey =
+                  key.startsWith("NSE_INDEX|") || key.startsWith("BSE_INDEX|");
+                const finalKey = isIndexKey ? key : key.toUpperCase();
+                updates[finalKey] = {
                   ltp: parsed.ltp ?? null,
                   cp: parsed.cp ?? null,
                   ohlc: parsed.ohlc ?? [],
@@ -147,6 +157,7 @@ export const MarketProvider = ({ children }) => {
         ltps,
         marketStatus,
         tokenExpired,
+        resetTokenExpired,
       }}
     >
       {children}

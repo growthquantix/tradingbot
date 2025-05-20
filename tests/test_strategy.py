@@ -27,6 +27,7 @@ class TestTradingStrategy(unittest.TestCase):
         signal = self.strategy.generate_signal(self.market_data)
         # For this dummy predictor and test data, expect "BUY"
         self.assertEqual(signal, "BUY")
+//est
 
 if __name__ == '__main__':
     unittest.main()

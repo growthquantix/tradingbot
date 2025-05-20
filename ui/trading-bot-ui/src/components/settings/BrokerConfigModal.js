@@ -12,7 +12,9 @@ import {
   useTheme,
 } from "@mui/material";
 import { Close } from "@mui/icons-material";
-import brokerAPI from "../../services/brokerAPI"; // ✅ Use API service
+import brokerAPI from "../../services/brokerAPI";
+import { useMarket } from "../../context/MarketProvider";
+
 const BASE_URL = process.env.REACT_APP_API_URL;
 const brokers = ["Zerodha", "Upstox", "Dhan", "Angel One", "Fyers"];
 const fields = {
@@ -29,11 +31,14 @@ const BrokerConfigModal = ({
   refreshBrokers,
   existingBrokers,
 }) => {
-  const theme = useTheme(); // ✅ ADD THIS
-  const isDark = theme.palette.mode === "dark"; // ✅ ADD THIS
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
   const [broker, setBroker] = useState({ broker_name: "", credentials: {} });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Get resetTokenExpired from context
+  const { resetTokenExpired } = useMarket();
 
   useEffect(() => {
     setError(""); // Clear errors when modal opens
@@ -46,17 +51,17 @@ const BrokerConfigModal = ({
     }));
   };
 
-  // ✅ Log existing brokers to check structure
+  //  Log existing brokers to check structure
   console.log("Existing Brokers:", existingBrokers);
 
-  // ✅ Improved duplicate check function
+  //  Improved duplicate check function
   const isDuplicate = () => {
     return existingBrokers.some((existing) => {
       if (existing.broker_name !== broker.broker_name) return false;
 
       const requiredFields = fields[broker.broker_name] || [];
 
-      // ✅ Extract credentials correctly from the existing broker
+      //  Extract credentials correctly from the existing broker
       const existingCredentials = existing.config || existing.credentials || {};
 
       return requiredFields.every(
@@ -94,7 +99,7 @@ const BrokerConfigModal = ({
       return;
     }
 
-    // ✅ Special handling for Upstox
+    //  Special handling for Upstox
     if (broker.broker_name === "Upstox") {
       try {
         const response = await brokerAPI.initUpstoxAuth({
@@ -105,6 +110,11 @@ const BrokerConfigModal = ({
 
         const authUrl = response?.auth_url;
         if (authUrl) {
+          // Reset token expired state on successful auth
+          resetTokenExpired();
+          console.log(
+            " Upstox authentication initiated, token expired state reset"
+          );
           window.open(authUrl, "_blank");
           onClose();
           return;
@@ -127,12 +137,17 @@ const BrokerConfigModal = ({
           config: {
             client_id: broker.credentials.client_id,
             secret_key: broker.credentials.secret_key,
-            redirect_uri: "http://127.0.0.1:8000/api/broker/fyers/callback", // ✅ Correct the redirect URI too
+            redirect_uri: "http://127.0.0.1:8000/api/broker/fyers/callback",
           },
         });
 
         const authUrl = response?.auth_url;
         if (authUrl) {
+          // Reset token expired state on successful auth
+          resetTokenExpired();
+          console.log(
+            " Fyers authentication initiated, token expired state reset"
+          );
           window.open(authUrl, "_blank");
           onClose();
           return;
@@ -155,6 +170,9 @@ const BrokerConfigModal = ({
 
     try {
       await brokerAPI.addBroker(broker);
+      // Reset token expired state on successful broker addition
+      resetTokenExpired();
+      console.log(" Broker added successfully, token expired state reset");
       refreshBrokers();
       onClose();
     } catch (error) {
