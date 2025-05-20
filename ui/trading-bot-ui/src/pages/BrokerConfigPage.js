@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { useMarket } from "../context/MarketProvider";
 import brokerAPI from "../services/brokerAPI";
 import {
   Box,
@@ -29,13 +31,29 @@ const BrokerConfigPage = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [error, setError] = useState("");
 
+  const navigate = useNavigate();
+  const { resetTokenExpired } = useMarket();
+
+  // Set the flag when we're in the config page
+  useEffect(() => {
+    console.log("🔧 Config page mounted");
+    // We do NOT call resetTokenExpired here - only when a successful operation happens
+  }, []);
+
+  // Handle navigation back to dashboard
+  const navigateToDashboard = () => {
+    console.log("🏠 Navigating back to dashboard");
+    sessionStorage.setItem("returningFromConfig", "true");
+    navigate("/");
+  };
+
   // ✅ Fetch Brokers from API
   const fetchBrokers = async () => {
     setLoading(true);
     setError("");
     try {
       const data = await brokerAPI.getBrokers();
-      console.log("📌 Broker API Response:", data); // ✅ Debug API response
+      console.log("📌 Broker API Response:", data);
       setBrokers(data.brokers || []);
     } catch (error) {
       console.error("❌ Failed to load brokers:", error);
@@ -70,6 +88,11 @@ const BrokerConfigPage = () => {
     try {
       const res = await brokerAPI.refreshBrokerToken(brokerId);
       if (res.auth_url) {
+        // Only reset token expired when successful
+        resetTokenExpired();
+        console.log(
+          "✅ Token refreshed successfully, token expired state reset"
+        );
         window.open(res.auth_url, "_blank");
       } else {
         console.warn("No auth URL returned.");
@@ -90,7 +113,16 @@ const BrokerConfigPage = () => {
         alignItems="center"
         mb={2}
       >
-        <Typography variant="h5">Broker Configurations</Typography>
+        <Box display="flex" alignItems="center">
+          <Typography variant="h5">Broker Configurations</Typography>
+          <Button
+            variant="outlined"
+            onClick={navigateToDashboard}
+            sx={{ ml: 2 }}
+          >
+            Back to Dashboard
+          </Button>
+        </Box>
         <Button variant="contained" onClick={() => setModalOpen(true)}>
           Add Broker
         </Button>
@@ -189,6 +221,7 @@ const BrokerConfigPage = () => {
         onClose={() => setModalOpen(false)}
         refreshBrokers={fetchBrokers}
         existingBrokers={brokers}
+        resetTokenExpired={resetTokenExpired}
       />
     </Box>
   );
