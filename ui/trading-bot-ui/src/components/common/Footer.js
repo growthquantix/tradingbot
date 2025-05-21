@@ -30,22 +30,32 @@ const Footer = () => {
         pt: 8,
         pb: 5,
         mt: 8,
-        backgroundColor: isDark ? "#0A0B0E" : "#F5F8FA",
-        color: isDark ? "#ccc" : "#111",
+        backgroundColor: "#0A0B0E",
+        color: isDark ? "#ccc" : "#eee",
         borderTop: `2px solid ${theme.palette.primary.main}`,
-        backgroundImage: isDark
-          ? "radial-gradient(circle at top left, rgba(0,255,255,0.1), transparent)"
-          : "none",
+        backgroundImage:
+          "radial-gradient(circle at top left, rgba(0,186,255,0.08), transparent 60%)",
+        position: "relative",
+        zIndex: 1,
       }}
     >
       <Container maxWidth="lg">
         <Grid container spacing={6} justifyContent="space-between">
           {/* Company Info */}
           <Grid item xs={12} md={4}>
-            <Typography variant="h6" fontWeight="bold" gutterBottom>
-              Growth Quantix
+            <Typography
+              variant="h6"
+              fontWeight="bold"
+              gutterBottom
+              sx={{
+                background: `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}
+            >
+              GrowthQuantix
             </Typography>
-            <Typography variant="body2" sx={{ opacity: 0.8 }}>
+            <Typography variant="body2" sx={{ opacity: 0.8, lineHeight: 1.8 }}>
               Revolutionizing trading through Artificial Intelligence. We bring
               automation, insight, and execution to every Indian retail trader.
             </Typography>
@@ -58,6 +68,7 @@ const Footer = () => {
               fontWeight="bold"
               textAlign="center"
               gutterBottom
+              sx={{ color: "white" }}
             >
               Quick Links
             </Typography>
@@ -79,6 +90,7 @@ const Footer = () => {
                       "&:hover": {
                         color: theme.palette.primary.main,
                       },
+                      px: 1.5,
                     }}
                   >
                     {link.label}
@@ -95,6 +107,7 @@ const Footer = () => {
               fontWeight="bold"
               textAlign={isMobile ? "center" : "right"}
               gutterBottom
+              sx={{ color: "white" }}
             >
               Stay Connected
             </Typography>
@@ -114,9 +127,20 @@ const Footer = () => {
                 size="small"
                 placeholder="Your email"
                 sx={{
-                  backgroundColor: "#fff",
-                  borderRadius: "4px",
+                  backgroundColor: "rgba(255, 255, 255, 0.05)",
+                  borderRadius: "8px",
                   minWidth: "200px",
+                  "& .MuiOutlinedInput-root": {
+                    "& fieldset": {
+                      borderColor: "rgba(255, 255, 255, 0.2)",
+                    },
+                    "&:hover fieldset": {
+                      borderColor: theme.palette.primary.main,
+                    },
+                  },
+                  "& .MuiInputBase-input": {
+                    color: "white",
+                  },
                 }}
               />
               <Button
@@ -124,11 +148,12 @@ const Footer = () => {
                 size="small"
                 endIcon={<EmailIcon />}
                 sx={{
-                  bgcolor: theme.palette.primary.main,
+                  background: `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
                   color: "#000",
                   fontWeight: "bold",
+                  borderRadius: "8px",
                   "&:hover": {
-                    bgcolor: theme.palette.primary.dark,
+                    background: `linear-gradient(90deg, ${theme.palette.primary.dark}, ${theme.palette.secondary.dark})`,
                   },
                 }}
               >
@@ -155,10 +180,11 @@ const Footer = () => {
                     rel="noopener noreferrer"
                     sx={{
                       color: theme.palette.primary.main,
-                      transition: "transform 0.2s",
+                      transition: "all 0.2s",
                       "&:hover": {
                         transform: "scale(1.2)",
                         color: theme.palette.primary.light,
+                        background: "rgba(0, 186, 255, 0.1)",
                       },
                     }}
                   >
@@ -183,7 +209,7 @@ const Footer = () => {
           textAlign="center"
           sx={{ opacity: 0.6, fontSize: "0.9rem" }}
         >
-          &copy; {new Date().getFullYear()} Growth Quantix. All rights reserved.
+          &copy; {new Date().getFullYear()} GrowthQuantix. All rights reserved.
         </Typography>
       </Container>
     </Box>
