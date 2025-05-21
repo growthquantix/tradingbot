@@ -1,194 +1,259 @@
-import React, { useState, lazy, Suspense } from "react";
-import { Box, Typography, Button, Menu, MenuItem, Fade } from "@mui/material";
-import { useNavigate } from "react-router-dom";
-import { isAuthenticated } from "../../services/authService"; // make sure this exists
+import React, { useState } from "react";
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  Box,
+  Button,
+  Container,
+  IconButton,
+  Drawer,
+  List,
+  ListItem,
+  ListItemText,
+  useMediaQuery,
+  useTheme,
+  Slide,
+} from "@mui/material";
+import { Menu as MenuIcon, Close as CloseIcon } from "@mui/icons-material";
+import { Link as RouterLink } from "react-router-dom";
 
-const LazyAuthModal = lazy(() => import("../auth/AuthModal"));
+const NavBar = ({ onSignIn, onSignUp, isScrolled }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down("md"));
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-const NavBar = () => {
-  const navigate = useNavigate();
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [activeMenu, setActiveMenu] = useState(null);
-  const [authOpen, setAuthOpen] = useState(false);
-  const [isLogin, setIsLogin] = useState(true);
-
-  const isUserAuthenticated = isAuthenticated();
-
-  const handleOpen = (event, menuName) => {
-    setAnchorEl(event.currentTarget);
-    setActiveMenu(menuName);
+  const handleDrawerToggle = () => {
+    setMobileOpen(!mobileOpen);
   };
 
-  const handleClose = () => {
-    setAnchorEl(null);
-    setActiveMenu(null);
-  };
+  const navLinks = [
+    { label: "Features", href: "#features" },
+    { label: "How AI Works", href: "#how-ai-works" },
+    { label: "Strategy", href: "#strategy" },
+    { label: "Pricing", href: "#pricing" },
+  ];
 
-  const menuData = {
-    Products: [
-      { label: "AI Agent", href: "#ai-agent" },
-      { label: "Backtester", href: "#backtest" },
-      { label: "Strategy Designer", href: "#strategy" },
-    ],
-    Solutions: [
-      { label: "Retail Traders", href: "#retail" },
-      { label: "Institutions", href: "#institutions" },
-    ],
-    Resources: [
-      { label: "Pricing", href: "#pricing" },
-      { label: "Docs", href: "#docs" },
-      { label: "Blog", href: "#blog" },
-    ],
-  };
-
-  const handleScrollTo = (id) => {
-    handleClose();
-    const el = document.querySelector(id);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  return (
-    <>
+  const drawer = (
+    <Box
+      onClick={handleDrawerToggle}
+      sx={{ textAlign: "center", p: 2, height: "100%", bgcolor: "#0A0B0E" }}
+    >
       <Box
         sx={{
           display: "flex",
           justifyContent: "space-between",
-          px: 4,
-          py: 2,
           alignItems: "center",
-          bgcolor: "#0A0B0E",
-          position: "sticky",
-          top: 0,
-          zIndex: 1000,
-          boxShadow: "0 1px 6px rgba(0,0,0,0.3)",
+          mb: 2,
         }}
       >
         <Typography
-          variant="h5"
-          sx={{ fontWeight: 700, color: "#00E5FF", cursor: "pointer" }}
-          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          variant="h6"
+          component="div"
+          sx={{ fontWeight: "bold", color: theme.palette.primary.main }}
         >
           GrowthQuantix
         </Typography>
+        <IconButton color="inherit" onClick={handleDrawerToggle}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+      <List>
+        {navLinks.map((item) => (
+          <ListItem
+            button
+            key={item.label}
+            component="a"
+            href={item.href}
+            sx={{
+              textAlign: "center",
+              py: 1.5,
+              color: "white",
+              "&:hover": {
+                color: theme.palette.primary.main,
+              },
+            }}
+          >
+            <ListItemText primary={item.label} />
+          </ListItem>
+        ))}
+        <ListItem button onClick={onSignIn} sx={{ mt: 2 }}>
+          <Button
+            fullWidth
+            variant="outlined"
+            color="primary"
+            sx={{ borderRadius: "8px" }}
+          >
+            Login
+          </Button>
+        </ListItem>
+        <ListItem button onClick={onSignUp}>
+          <Button
+            fullWidth
+            variant="contained"
+            color="primary"
+            sx={{
+              borderRadius: "8px",
+              background: `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+              fontWeight: "bold",
+              boxShadow: "0 4px 14px 0 rgba(0, 186, 255, 0.4)",
+            }}
+          >
+            Sign Up Free
+          </Button>
+        </ListItem>
+      </List>
+    </Box>
+  );
 
-        <Box sx={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {Object.keys(menuData).map((menu) => (
-            <Box
-              key={menu}
-              onMouseEnter={(e) => handleOpen(e, menu)}
-              onMouseLeave={handleClose}
+  return (
+    <>
+      <Slide appear={false} direction="down" in={!isScrolled}>
+        <AppBar
+          position="fixed"
+          sx={{
+            bgcolor: isScrolled ? "rgba(10, 11, 14, 0.85)" : "transparent",
+            backdropFilter: isScrolled ? "blur(10px)" : "none",
+            boxShadow: isScrolled ? "0 4px 20px rgba(0,0,0,0.1)" : "none",
+            transition: "all 0.3s ease",
+            borderBottom: isScrolled
+              ? `1px solid rgba(0, 186, 255, 0.2)`
+              : "none",
+          }}
+        >
+          <Container maxWidth="xl">
+            <Toolbar
               sx={{
-                position: "relative",
-                color: "#fff",
-                fontWeight: 500,
-                cursor: "pointer",
-                "&:hover": { color: "#00E5FF" },
+                display: "flex",
+                justifyContent: "space-between",
+                py: isScrolled ? 1 : 1.5,
+                transition: "all 0.3s ease",
               }}
             >
-              <Typography>{menu}</Typography>
-              <Menu
-                anchorEl={anchorEl}
-                open={activeMenu === menu}
-                onClose={handleClose}
-                TransitionComponent={Fade}
-                anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-                transformOrigin={{ vertical: "top", horizontal: "left" }}
-                PaperProps={{
-                  sx: {
-                    bgcolor: "#1A1A1D",
-                    color: "#fff",
-                    borderRadius: 1,
-                    boxShadow: 5,
-                    minWidth: 180,
+              <Typography
+                variant="h5"
+                component={RouterLink}
+                to="/"
+                sx={{
+                  fontWeight: "bold",
+                  color: theme.palette.primary.main,
+                  textDecoration: "none",
+                  backgroundImage: `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                  WebkitBackgroundClip: "text",
+                  WebkitTextFillColor: "transparent",
+                  transition: "transform 0.3s ease",
+                  "&:hover": {
+                    transform: "scale(1.05)",
                   },
                 }}
               >
-                {menuData[menu].map((item, idx) => (
-                  <MenuItem
-                    key={idx}
-                    onClick={() => handleScrollTo(item.href)}
+                GrowthQuantix
+              </Typography>
+
+              {/* Desktop Navigation */}
+              {!isMobile && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {navLinks.map((link) => (
+                    <Button
+                      key={link.label}
+                      color="inherit"
+                      component="a"
+                      href={link.href}
+                      sx={{
+                        fontWeight: "medium",
+                        position: "relative",
+                        "&:hover": {
+                          color: theme.palette.primary.main,
+                          background: "transparent",
+                        },
+                        "&::after": {
+                          content: '""',
+                          position: "absolute",
+                          bottom: 0,
+                          left: "50%",
+                          width: "0%",
+                          height: "2px",
+                          backgroundColor: theme.palette.primary.main,
+                          transition: "all 0.3s ease",
+                          transform: "translateX(-50%)",
+                        },
+                        "&:hover::after": {
+                          width: "80%",
+                        },
+                      }}
+                    >
+                      {link.label}
+                    </Button>
+                  ))}
+
+                  <Button
+                    onClick={onSignIn}
                     sx={{
+                      borderRadius: "8px",
+                      px: 3,
+                      border: `1px solid rgba(0, 186, 255, 0.3)`,
+                      color: "white",
                       "&:hover": {
-                        bgcolor: "#00E5FF",
-                        color: "#000",
+                        borderColor: theme.palette.primary.main,
+                        backgroundColor: "rgba(0, 186, 255, 0.1)",
                       },
                     }}
                   >
-                    {item.label}
-                  </MenuItem>
-                ))}
-              </Menu>
-            </Box>
-          ))}
+                    Login
+                  </Button>
 
-          {isUserAuthenticated ? (
-            <Button
-              variant="contained"
-              onClick={() => navigate("/dashboard")}
-              sx={{
-                bgcolor: "#00E5FF",
-                color: "#000",
-                fontWeight: "bold",
-                borderRadius: "999px",
-                px: 3,
-                "&:hover": {
-                  bgcolor: "#00B2CC",
-                },
-              }}
-            >
-              Go to Dashboard
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outlined"
-                color="inherit"
-                sx={{ borderColor: "#00E5FF", color: "#00E5FF" }}
-                onClick={() => {
-                  setIsLogin(true);
-                  setAuthOpen(true);
-                }}
-              >
-                Sign In
-              </Button>
-              <Button
-                variant="contained"
-                sx={{
-                  bgcolor: "#00E5FF",
-                  color: "#000",
-                  fontWeight: "bold",
-                  borderRadius: "999px",
-                  px: 3,
-                  "&:hover": {
-                    bgcolor: "#00B2CC",
-                  },
-                }}
-                onClick={() => {
-                  setIsLogin(false);
-                  setAuthOpen(true);
-                }}
-              >
-                Sign Up
-              </Button>
-            </>
-          )}
-        </Box>
-      </Box>
+                  <Button
+                    onClick={onSignUp}
+                    variant="contained"
+                    color="primary"
+                    sx={{
+                      borderRadius: "8px",
+                      px: 3,
+                      fontWeight: "bold",
+                      background: `linear-gradient(90deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                      boxShadow: "0 4px 14px 0 rgba(0, 186, 255, 0.4)",
+                      "&:hover": {
+                        background: `linear-gradient(90deg, ${theme.palette.primary.dark}, ${theme.palette.secondary.dark})`,
+                        boxShadow: "0 6px 20px 0 rgba(0, 186, 255, 0.6)",
+                      },
+                    }}
+                  >
+                    Sign Up Free
+                  </Button>
+                </Box>
+              )}
 
-      <Suspense fallback={<Box>Loading...</Box>}>
-        {authOpen && (
-          <LazyAuthModal
-            open={authOpen}
-            handleClose={() => setAuthOpen(false)}
-            onLoginSuccess={() => {
-              setAuthOpen(false);
-              navigate("/dashboard");
-            }}
-            isLogin={isLogin}
-            setIsLogin={setIsLogin}
-          />
-        )}
-      </Suspense>
+              {/* Mobile Menu Button */}
+              {isMobile && (
+                <IconButton
+                  color="inherit"
+                  aria-label="open drawer"
+                  edge="start"
+                  onClick={handleDrawerToggle}
+                >
+                  <MenuIcon />
+                </IconButton>
+              )}
+            </Toolbar>
+          </Container>
+        </AppBar>
+      </Slide>
+
+      {/* Mobile Navigation Drawer */}
+      <Drawer
+        variant="temporary"
+        open={mobileOpen}
+        onClose={handleDrawerToggle}
+        ModalProps={{
+          keepMounted: true,
+        }}
+        sx={{
+          display: { xs: "block", md: "none" },
+          "& .MuiDrawer-paper": { width: "100%" },
+        }}
+      >
+        {drawer}
+      </Drawer>
     </>
   );
 };
