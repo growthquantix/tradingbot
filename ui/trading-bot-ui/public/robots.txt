@@ -1,3 +1,232 @@
-# https://www.robotstxt.org/robotstxt.html
+# robots.txt for GrowthQuantix AI Trading System
+# https://growthquantix.com/robots.txt
+
+# Allow all search engines to crawl the main site
 User-agent: *
-Disallow:
+Allow: /
+
+# Block access to sensitive trading and user data
+Disallow: /api/
+Disallow: /auth/
+Disallow: /login/
+Disallow: /dashboard/
+Disallow: /user/
+Disallow: /account/
+Disallow: /portfolio/
+Disallow: /trades/
+Disallow: /orders/
+Disallow: /positions/
+Disallow: /wallet/
+Disallow: /balance/
+Disallow: /transactions/
+Disallow: /settings/
+Disallow: /profile/
+Disallow: /admin/
+Disallow: /backtest/
+Disallow: /strategy/
+Disallow: /alerts/
+Disallow: /reports/
+Disallow: /webhook/
+Disallow: /callback/
+Disallow: /oauth/
+Disallow: /2fa/
+Disallow: /kyc/
+Disallow: /aml/
+Disallow: /compliance/
+Disallow: /risk/
+Disallow: /ml-models/
+Disallow: /ai-engine/
+Disallow: /algorithms/
+Disallow: /signals/
+Disallow: /paper-trading/
+Disallow: /simulation/
+Disallow: /bot-config/
+Disallow: /automation/
+Disallow: /market-data/
+Disallow: /real-time/
+Disallow: /streaming/
+Disallow: /websocket/
+
+# Block access to technical and development files
+Disallow: /build/
+Disallow: /src/
+Disallow: /node_modules/
+Disallow: /*.json$
+Disallow: /*.env$
+Disallow: /*.config.js$
+Disallow: /webpack/
+Disallow: /static/js/
+Disallow: /static/css/
+Disallow: /.well-known/
+Disallow: /temp/
+Disallow: /cache/
+Disallow: /logs/
+
+# Block access to security and system files
+Disallow: /.env
+Disallow: /.git/
+Disallow: /security/
+Disallow: /keys/
+Disallow: /certificates/
+Disallow: /backup/
+
+# Allow access to important marketing and SEO pages
+Allow: /about
+Allow: /features
+Allow: /pricing
+Allow: /contact
+Allow: /blog
+Allow: /help
+Allow: /support
+Allow: /terms
+Allow: /privacy
+Allow: /security
+Allow: /docs
+Allow: /faq
+Allow: /demo
+Allow: /getting-started
+Allow: /tutorials
+Allow: /webinars
+Allow: /case-studies
+Allow: /whitepaper
+Allow: /research
+Allow: /market-analysis
+Allow: /press
+Allow: /careers
+Allow: /partners
+Allow: /integrations
+Allow: /api-docs
+Allow: /status
+
+# Block specific file types that shouldn't be indexed
+Disallow: /*.pdf$
+Disallow: /*.doc$
+Disallow: /*.docx$
+Disallow: /*.xls$
+Disallow: /*.xlsx$
+Disallow: /*.zip$
+Disallow: /*.tar.gz$
+
+# Special rules for specific search engines
+
+# Google - Allow full access to public content
+User-agent: Googlebot
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+Disallow: /dashboard/
+Disallow: /user/
+Disallow: /admin/
+
+# Bing - Same as Google
+User-agent: Bingbot
+Allow: /
+Disallow: /api/
+Disallow: /auth/
+Disallow: /dashboard/
+Disallow: /user/
+Disallow: /admin/
+
+# Block aggressive crawlers that might impact trading performance
+User-agent: AhrefsBot
+Crawl-delay: 10
+
+User-agent: SemrushBot
+Crawl-delay: 10
+
+User-agent: MJ12bot
+Crawl-delay: 30
+
+User-agent: DotBot
+Crawl-delay: 10
+
+# Block malicious or unwanted bots
+User-agent: PetalBot
+Disallow: /
+
+User-agent: YandexBot
+Disallow: /
+
+User-agent: BLEXBot
+Disallow: /
+
+User-agent: DataForSeoBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+# Block scrapers and content theft bots
+User-agent: HTTrack
+Disallow: /
+
+User-agent: SiteSnagger
+Disallow: /
+
+User-agent: WebZIP
+Disallow: /
+
+User-agent: WebCopier
+Disallow: /
+
+User-agent: Offline Explorer
+Disallow: /
+
+User-agent: Teleport
+Disallow: /
+
+User-agent: TeleportPro
+Disallow: /
+
+User-agent: WebStripper
+Disallow: /
+
+User-agent: larbin
+Disallow: /
+
+User-agent: libwww-perl
+Disallow: /
+
+User-agent: Python-urllib
+Disallow: /
+
+User-agent: Python-requests
+Disallow: /
+
+# Set crawl delay for all bots to prevent server overload during trading hours
+User-agent: *
+Crawl-delay: 5
+
+# Sitemap location
+Sitemap: https://growthquantix.com/sitemap.xml
+
+# Additional sitemaps for different content types
+Sitemap: https://growthquantix.com/blog-sitemap.xml
+Sitemap: https://growthquantix.com/docs-sitemap.xml
+Sitemap: https://growthquantix.com/news-sitemap.xml
+Sitemap: https://growthquantix.com/image-sitemap.xml
+
+# Host directive (helps with canonical URLs)
+Host: https://growthquantix.com
+
+# Clean-param directive (for dynamic URLs with tracking parameters)
+Clean-param: utm_source&utm_medium&utm_campaign&utm_term&utm_content
+Clean-param: fbclid&gclid&msclkid
+Clean-param: ref&referrer&source
+
+# Contact information for webmaster
+# Webmaster: admin@growthquantix.com
+# Security: security@growthquantix.com
+# For bot issues: bots@growthquantix.com
