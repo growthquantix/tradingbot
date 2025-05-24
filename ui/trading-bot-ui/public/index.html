@@ -2,43 +2,380 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <title>Trading Dashboard</title>
+
+    <!-- Primary Meta Tags -->
+    <title>GrowthQuantix - AI-Powered Automated Trading System</title>
+    <meta
+      name="title"
+      content="GrowthQuantix - AI-Powered Automated Trading System"
+    />
     <meta
       name="description"
-      content="Web site created using create-react-app"
+      content="Advanced AI-driven automated trading platform with machine learning algorithms, real-time market analysis, and intelligent portfolio management for seamless trading execution."
     />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <!--
-      manifest.json provides metadata used when your web app is installed on a
-      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-    -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!--
-      Notice the use of %PUBLIC_URL% in the tags above.
-      It will be replaced with the URL of the `public` folder during the build.
-      Only files inside the `public` folder can be referenced from the HTML.
+    <meta
+      name="keywords"
+      content="AI trading, automated trading, algorithmic trading, machine learning, trading bot, artificial intelligence, quantitative trading, algo trading, automated investing, trading algorithms"
+    />
+    <meta name="author" content="GrowthQuantix" />
 
-      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-      work correctly both with client-side routing and a non-root public URL.
-      Learn how to configure a non-root public URL by running `npm run build`.
-    -->
-    <title>React App</title>
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://growthquantix.com/" />
+    <meta
+      property="og:title"
+      content="GrowthQuantix - AI-Powered Automated Trading System"
+    />
+    <meta
+      property="og:description"
+      content="Revolutionary AI-driven trading platform that uses machine learning to automate your trading strategies and maximize returns with intelligent market analysis."
+    />
+    <meta
+      property="og:image"
+      content="https://growthquantix.com/og-image.png"
+    />
+
+    <!-- Twitter -->
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://growthquantix.com/" />
+    <meta
+      property="twitter:title"
+      content="GrowthQuantix - AI-Powered Automated Trading System"
+    />
+    <meta
+      property="twitter:description"
+      content="Revolutionary AI-driven trading platform that uses machine learning to automate your trading strategies and maximize returns with intelligent market analysis."
+    />
+    <meta
+      property="twitter:image"
+      content="https://growthquantix.com/twitter-image.png"
+    />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/favicon.svg" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href="%PUBLIC_URL%/favicon-32x32.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="16x16"
+      href="%PUBLIC_URL%/favicon-16x16.png"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="96x96"
+      href="%PUBLIC_URL%/favicon-96x96.png"
+    />
+    <link rel="shortcut icon" href="%PUBLIC_URL%/favicon.ico" />
+
+    <!-- Apple Touch Icons -->
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="%PUBLIC_URL%/apple-touch-icon.png"
+    />
+    <meta name="apple-mobile-web-app-title" content="GrowthQuantix" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="%PUBLIC_URL%/site.webmanifest" />
+
+    <!-- Preconnect to external domains for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://api.growthquantix.com" />
+    <link rel="preconnect" href="https://accounts.google.com" />
+    <link rel="preconnect" href="https://apis.google.com" />
+    <link rel="preconnect" href="https://api.upstox.com" />
+    <link rel="preconnect" href="https://api.dhan.co" />
+    <link rel="dns-prefetch" href="//cdn.jsdelivr.net" />
+    <link rel="dns-prefetch" href="//cdnjs.cloudflare.com" />
+    <link rel="dns-prefetch" href="//www.gstatic.com" />
+    <link rel="dns-prefetch" href="//api.zerodha.com" />
+    <link rel="dns-prefetch" href="//api.fyers.in" />
+    <link rel="dns-prefetch" href="//www.nseindia.com" />
+
+    <!-- Performance Hints -->
+    <link rel="prefetch" href="%PUBLIC_URL%/static/js/main.js" />
+    <link rel="preload" href="%PUBLIC_URL%/static/css/main.css" as="style" />
+
+    <!-- Resource Hints for Trading Data -->
+    <link rel="dns-prefetch" href="//fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="//query1.finance.yahoo.com" />
+    <link rel="dns-prefetch" href="//api.telegram.org" />
+    <link rel="dns-prefetch" href="//api.twilio.com" />
+
+    <!-- Critical CSS Inline -->
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      #root {
+        min-height: 100vh;
+      }
+      .loading {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+      }
+    </style>
+
+    <!-- Security Headers -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+
+    <!-- Robots -->
+    <meta name="robots" content="index, follow" />
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://growthquantix.com/" />
+
+    <!-- JSON-LD Structured Data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "GrowthQuantix",
+        "description": "AI-powered automated trading system with machine learning algorithms for intelligent market analysis and portfolio management",
+        "url": "https://growthquantix.com",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Web Browser",
+        "offers": {
+          "@type": "Offer",
+          "category": "Financial Technology"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "GrowthQuantix",
+          "url": "https://growthquantix.com"
+        },
+        "featureList": [
+          "AI-powered trading algorithms",
+          "Automated portfolio management",
+          "Real-time market analysis",
+          "Machine learning optimization",
+          "Risk management tools"
+        ]
+      }
+    </script>
+
+    <!-- Additional Meta Tags -->
+    <meta name="category" content="Finance, Trading, AI Technology" />
+    <meta name="coverage" content="Worldwide" />
+    <meta name="distribution" content="Global" />
+    <meta name="rating" content="General" />
+    <meta name="target" content="Traders, Investors, Financial Professionals" />
+
+    <!-- Geo Tags -->
+    <meta name="geo.region" content="US" />
+    <meta name="geo.country" content="United States" />
+    <meta name="ICBM" content="40.7128, -74.0060" />
+
+    <!-- Social Media Tags -->
+    <meta property="og:site_name" content="GrowthQuantix" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:author" content="GrowthQuantix" />
+    <meta property="og:updated_time" content="2025-05-23T00:00:00Z" />
+    <meta name="twitter:site" content="@growthquantix" />
+    <meta name="twitter:creator" content="@growthquantix" />
+    <meta name="twitter:domain" content="growthquantix.com" />
+    <meta
+      property="og:see_also"
+      content="https://linkedin.com/company/growthquantix"
+    />
+
+    <!-- App Store Tags -->
+    <meta property="al:ios:app_name" content="GrowthQuantix" />
+    <meta property="al:android:app_name" content="GrowthQuantix" />
+    <meta property="al:web:url" content="https://growthquantix.com" />
+
+    <!-- 🚀 COMPREHENSIVE CSP FOR TRADING APPLICATION -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; 
+               script-src 'self' 'unsafe-inline' 'unsafe-eval' 
+                         https://cdnjs.cloudflare.com 
+                         https://cdn.jsdelivr.net 
+                         https://unpkg.com 
+                         https://code.jquery.com 
+                         https://stackpath.bootstrapcdn.com 
+                         https://apis.google.com 
+                         https://accounts.google.com 
+                         https://www.gstatic.com 
+                         https://gapi.google.com 
+                         https://s3.tradingview.com 
+                         https://charting-library.tradingview.com; 
+               style-src 'self' 'unsafe-inline' 
+                        https://fonts.googleapis.com 
+                        https://accounts.google.com 
+                        https://cdnjs.cloudflare.com 
+                        https://cdn.jsdelivr.net 
+                        https://stackpath.bootstrapcdn.com; 
+               font-src 'self' 
+                        https://fonts.gstatic.com 
+                        https://cdnjs.cloudflare.com 
+                        https://cdn.jsdelivr.net 
+                        data:; 
+               img-src 'self' data: blob: https: 
+                       https://lh3.googleusercontent.com 
+                       https://www.google.com 
+                       https://images.unsplash.com 
+                       https://via.placeholder.com 
+                       https://i.imgur.com 
+                       https://cdn.jsdelivr.net 
+                       https://s3.tradingview.com; 
+               connect-src 'self' https: wss: ws: 
+                          http://localhost:* 
+                          https://localhost:* 
+                          ws://localhost:* 
+                          wss://localhost:* 
+                          https://accounts.google.com 
+                          https://www.googleapis.com 
+                          https://oauth2.googleapis.com 
+                          https://api.growthquantix.com 
+                          https://growthquantix.com 
+                          https://resplendent-shortbread-e830d3.netlify.app 
+                          https://api.upstox.com 
+                          wss://api.upstox.com 
+                          https://api-v2.upstox.com 
+                          wss://api-v2.upstox.com 
+                          https://api.dhan.co 
+                          wss://api-feed.dhan.co 
+                          https://api.zerodha.com 
+                          https://kite.zerodha.com 
+                          wss://ws.zerodha.com 
+                          https://api.fyers.in 
+                          wss://api.fyers.in 
+                          https://api.angelbroking.com 
+                          https://smartapi.angelbroking.com 
+                          wss://smartapisocket.angelbroking.com 
+                          https://www.nseindia.com 
+                          https://api.binance.com 
+                          wss://stream.binance.com 
+                          https://api.coinbase.com 
+                          wss://ws-feed.pro.coinbase.com 
+                          https://api.alpaca.markets 
+                          wss://stream.data.alpaca.markets 
+                          https://query1.finance.yahoo.com 
+                          https://query2.finance.yahoo.com 
+                          https://api.telegram.org 
+                          https://api.twilio.com 
+                          https://s3.tradingview.com 
+                          https://api.tradingview.com 
+                          wss://data.tradingview.com; 
+               frame-src 'self' 
+                        https://accounts.google.com 
+                        https://api.upstox.com 
+                        https://kite.zerodha.com 
+                        https://api.fyers.in 
+                        https://www.tradingview.com 
+                        https://s.tradingview.com; 
+               worker-src 'self' blob:; 
+               manifest-src 'self'; 
+               object-src 'none'; 
+               base-uri 'self'; 
+               form-action 'self' https: 
+                          https://accounts.google.com 
+                          https://api.growthquantix.com 
+                          https://api.upstox.com 
+                          https://api.dhan.co; 
+               media-src 'self' data: blob:; 
+               child-src 'self' 
+                        https://accounts.google.com 
+                        https://www.tradingview.com;"
+    />
+
+    <meta
+      http-equiv="Referrer-Policy"
+      content="strict-origin-when-cross-origin"
+    />
+    <meta
+      http-equiv="Permissions-Policy"
+      content="camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    />
+
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="GrowthQuantix AI Trading" />
+    <meta name="msapplication-TileColor" content="#000000" />
+    <meta
+      name="msapplication-config"
+      content="%PUBLIC_URL%/browserconfig.xml"
+    />
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>
+      <div
+        style="
+          text-align: center;
+          padding: 50px;
+          font-family: Arial, sans-serif;
+          background: #f8f9fa;
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        "
+      >
+        <div
+          style="
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+          "
+        >
+          <h1 style="color: #333; margin-bottom: 20px">
+            ⚡ JavaScript Required
+          </h1>
+          <p style="color: #666; margin-bottom: 15px">
+            GrowthQuantix AI-Powered Trading System requires JavaScript to be
+            enabled in your browser.
+          </p>
+          <p style="color: #666; margin-bottom: 25px">
+            Our advanced AI algorithms and real-time trading features need
+            JavaScript to function properly.
+          </p>
+          <div
+            style="
+              background: #e3f2fd;
+              padding: 15px;
+              border-radius: 4px;
+              margin-bottom: 20px;
+            "
+          >
+            <strong style="color: #1976d2">How to enable JavaScript:</strong>
+            <ul style="text-align: left; margin: 10px 0; color: #666">
+              <li>
+                Chrome: Settings → Privacy and Security → Site Settings →
+                JavaScript
+              </li>
+              <li>Firefox: about:config → javascript.enabled → true</li>
+              <li>Safari: Preferences → Security → Enable JavaScript</li>
+            </ul>
+          </div>
+          <p style="color: #888; font-size: 14px">
+            Please enable JavaScript and refresh the page to access your
+            automated trading dashboard.
+          </p>
+        </div>
+      </div>
+    </noscript>
     <div id="root"></div>
-    <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
-
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
-
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
   </body>
 </html>
