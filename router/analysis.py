@@ -1,7 +1,9 @@
 from fastapi import APIRouter
 import joblib
 import pandas as pd
+import logging
 
+logging.basicConfig(level=logging.ERROR)
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 @router.get("/sectoral-options")
@@ -25,4 +27,5 @@ def analyze_sectoral_options():
         ]
         return {"recommendedStocks": recommended_stocks}
     except Exception as e:
-        return {"error": f"Failed to load model: {str(e)}"}
+        logging.error("Failed to load model", exc_info=True)
+        return {"error": "An internal error has occurred. Please try again later."}
