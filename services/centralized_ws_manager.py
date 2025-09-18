@@ -145,6 +145,18 @@ except ImportError:
 
     email_service = DummyEmailService()
 
+# Import Kafka service with error handling
+try:
+    from services.kafka_service import get_kafka_service
+
+    kafka_service = get_kafka_service()
+    KAFKA_AVAILABLE = True
+    logger.info("✅ Kafka service available for integration")
+except ImportError as e:
+    logger.warning(f"⚠️ Kafka service not available: {e}")
+    kafka_service = None
+    KAFKA_AVAILABLE = False
+
 # Callback type definition
 CallbackFunction = Callable[[Dict[str, Any]], Any]
 
@@ -178,6 +190,11 @@ class CentralizedWebSocketManager:
         self.last_websocket_url = None
         self._shutdown_scheduled = False
 
+        # 🚀 HFT Kafka integration
+        self.hft_producer = None
+        self.hft_subscription_manager = None
+        self._hft_initialized = False
+
         # Subscription management
         self.all_instrument_keys: Set[str] = set()
         self.active_instrument_keys: Set[str] = set()
@@ -208,13 +225,15 @@ class CentralizedWebSocketManager:
         self.trading_clients: Dict[str, WebSocket] = {}
         self.client_subscriptions: Dict[str, Set[str]] = {}
 
-        # Callback registration
-        self.callbacks: Dict[str, List[CallbackFunction]] = {
-            "price_update": [],
-            "market_status": [],
-            "connection_status": [],
-            "error": [],
+        # 🚀 CLEAN ARCHITECTURE: Only essential callbacks for system management
+        # All trading/analytics services now use the real-time data hub
+        self.system_callbacks: Dict[str, List[CallbackFunction]] = {
+            "connection_status": [],  # For connection monitoring only
+            "error": [],  # For system error handling only
         }
+
+        # Legacy callbacks for backward compatibility with services like breakout engine
+        self.callbacks: Dict[str, List[CallbackFunction]] = {}
 
         # Performance metrics
         self.performance_metrics = {
@@ -368,7 +387,7 @@ class CentralizedWebSocketManager:
     async def _load_admin_token(self) -> bool:
         """Load admin token from database with retry logic"""
         max_retries = 3
-        retry_delay = 5
+        retry_delay = 2
 
         for attempt in range(max_retries):
             try:
@@ -573,15 +592,15 @@ class CentralizedWebSocketManager:
             from core.config import ADMIN_EMAIL
 
             with SessionLocal() as db:
-                admin_user = (
-                    db.query(BrokerConfig)
-                    .filter(
-                        BrokerConfig.user.has(email=ADMIN_EMAIL),
-                        BrokerConfig.broker_name.ilike("upstox"),
-                        BrokerConfig.is_active == True,
-                    )
-                    .first()
-                )
+                # Build base query with explicit join with user and broker_config
+                q = db.query(BrokerConfig).join(User, BrokerConfig.user_id == User.id)
+
+                admin_user = q.filter(
+                    # BrokerConfig.user.has(email=ADMIN_EMAIL),
+                    User.role == "admin",
+                    BrokerConfig.broker_name.ilike("upstox"),
+                    BrokerConfig.access_token.isnot(None),
+                ).first()
 
                 if not admin_user or not admin_user.access_token_expiry:
                     logger.warning("⚠️ No admin broker config found")
@@ -795,11 +814,14 @@ class CentralizedWebSocketManager:
             return False
 
     async def start_connection(self):
-        """Start the centralized WebSocket connection"""
+        """Start the centralized WebSocket connection with HFT Kafka integration"""
         if not self.is_running:
             if not await self.initialize():
                 logger.error("❌ Failed to initialize manager, cannot start connection")
                 return False
+
+        # 🚀 Initialize HFT Kafka producer for ultra-low latency streaming
+        await self.initialize_hft_kafka()
 
         # Reset for fresh start
         self.reconnect_attempts = 0
@@ -810,7 +832,9 @@ class CentralizedWebSocketManager:
         self.background_tasks.add(task)
         task.add_done_callback(self.background_tasks.discard)
 
-        logger.info("🚀 Centralized WebSocket connection starting...")
+        logger.info(
+            "🚀 Centralized WebSocket connection starting with HFT Kafka integration..."
+        )
         return True
 
     async def _check_network_connectivity(self) -> bool:
@@ -960,9 +984,9 @@ class CentralizedWebSocketManager:
             raise
 
     async def _handle_market_data(self, data: dict):
-        """Handle incoming market data with enhanced format handling"""
+        """🚀 HFT-GRADE: Ultra-low latency market data handling with Kafka streaming"""
         try:
-            start_time = time.time()
+            start_time_ns = time.perf_counter_ns()
             self._last_raw_data = data.copy() if isinstance(data, dict) else data
             self.last_data_received = datetime.now()
             self.performance_metrics["messages_received"] += 1
@@ -970,47 +994,96 @@ class CentralizedWebSocketManager:
             # Signal connection is working
             if not self.connection_ready.is_set():
                 self.connection_ready.set()
-                logger.info("✅ WebSocket connection is receiving data")
-                await self._broadcast_connection_status(
-                    {
-                        "status": "connected",
-                        "message": "WebSocket connection established",
-                    }
+                logger.info("✅ WebSocket connection established")
+                await self._notify_connection_status({"status": "connected"})
+
+            # 🚀 PRIORITY 1: HFT Kafka streaming (fire-and-forget, zero blocking)
+            if hasattr(self, "hft_producer") and self.hft_producer:
+                asyncio.create_task(self._hft_kafka_stream(data, start_time_ns))
+
+            # 🚀 PRIORITY 1.5: HFT Subscription-based ADR processing (parallel)
+            if (
+                hasattr(self, "hft_subscription_manager")
+                and self.hft_subscription_manager
+            ):
+                asyncio.create_task(
+                    self.hft_subscription_manager.process_live_feed_data(data)
                 )
 
-            # Determine message type
+            # 🚀 PRIORITY 2: Real-time data hub distribution (existing system)
+            try:
+                from services.realtime_data_hub import broadcast_market_data
+
+                # Parallel execution - don't wait for hub completion
+                asyncio.create_task(broadcast_market_data(data))
+
+                logger.debug(f"🚀 Market data distributed via real-time hub")
+
+            except ImportError:
+                logger.warning(
+                    "⚠️ Real-time data hub not available - continuing with HFT Kafka only"
+                )
+            except Exception as e:
+                logger.error(f"❌ Real-time hub distribution failed: {e}")
+                # Continue with Kafka - don't fail the entire pipeline
+
+            # 🚀 PRIORITY 3: Simple Kafka System Integration (fire-and-forget)
+            try:
+                from services.simple_kafka_system import get_kafka_system
+
+                kafka_system = get_kafka_system()
+
+                # Check if Kafka producer is initialized
+                if kafka_system.producer is None:
+                    logger.debug(
+                        "🔄 Kafka producer not yet initialized, skipping message"
+                    )
+                    return
+
+                # Publish market data to appropriate Kafka topic
+                asyncio.create_task(
+                    kafka_system.publish_message(
+                        topic="trading.market_data.raw",
+                        message=data,
+                        key=(
+                            data.get("instrument_key")
+                            if isinstance(data, dict)
+                            else None
+                        ),
+                    )
+                )
+
+                logger.debug("📤 Market data published to simple Kafka system")
+
+            except ImportError:
+                logger.debug(
+                    "⚠️ Simple Kafka system not available - continuing without Kafka"
+                )
+            except Exception as e:
+                logger.error(f"❌ Simple Kafka publishing failed: {e}")
+                # Continue without Kafka - don't fail the entire pipeline
+
+            # 🧹 CLEAN: Minimal message type handling for system monitoring only
             msg_type = data.get("type")
-            has_feeds = "feeds" in data
 
-            # Handle market_info messages
-            if msg_type == "market_info" or "marketInfo" in data:
-                await self._handle_market_info(data)
-
-            # Handle feeds format (main data format)
-            elif has_feeds:
-                await self._handle_feeds_data(data)
-
-            # Handle live_feed messages (older format)
-            elif msg_type == "live_feed":
-                await self._handle_live_feed_data(data)
-
-            elif msg_type == "heartbeat":
-                logger.debug("💓 Received heartbeat")
-
+            if msg_type == "heartbeat":
+                logger.debug("💓 Heartbeat received")
             elif msg_type == "error":
-                logger.error(f"❌ Market data error: {data}")
-                await self._execute_callbacks("error", data)
-                await self._broadcast_error(data)
-
+                logger.error(f"❌ WebSocket error: {data}")
+                await self._notify_system_error(data)
+            elif (
+                "feeds" in data
+                or msg_type == "live_feed"
+                or any("|" in str(k) for k in data.keys())
+            ):
+                # All market data is now handled by the real-time hub
+                # Just update UI cache in background (non-blocking)
+                asyncio.create_task(self._update_ui_cache_background(data))
             else:
-                # Handle direct instrument data format
-                if any(key for key in data if "|" in key):
-                    await self._handle_direct_instrument_data(data)
-                else:
-                    logger.warning(f"⚠️ Unknown message format: {str(data)[:200]}...")
+                logger.debug(f"🔍 Non-market message: {msg_type}")
 
             # Calculate processing time
-            processing_time = (time.time() - start_time) * 1000
+            processing_time = (time.time() - start_time_ns) * 1000
             self.performance_metrics["last_latency_ms"] = processing_time
 
             # Update average latency
@@ -1086,90 +1159,72 @@ class CentralizedWebSocketManager:
                 await self._store_market_snapshot()
                 self._schedule_market_close_shutdown()
 
-    async def _handle_feeds_data(self, data: dict):
-        """🚀 Handle feeds format data with ultra-fast hub integration + ZERO-DELAY streaming"""
-        feeds = data.get("feeds", {})
-        update_count = len(feeds)
-        is_snapshot = self.update_count == 0
-
-        if update_count > 0:
-            self.data_count += update_count
-            self.update_count += 1
-
-            # 🚀 CRITICAL: ZERO-DELAY real-time streaming to UI FIRST (before any processing)
-            try:
-                from services.realtime_data_streamer import realtime_streamer
-
-                # This bypasses ALL processing and sends raw data directly to UI
-                await realtime_streamer.stream_raw_market_data(data)
-            except ImportError:
-                logger.debug("Real-time streamer not available - using legacy path")
-            except Exception as e:
-                logger.debug(f"Real-time streaming error: {e}")
-
-            # 🚨 CRITICAL: ZERO-DELAY breakout detection (parallel with UI streaming)
-            try:
-                # Use NEW modular breakout system instead of legacy realtime detector
-                from services.breakout import get_breakout_system
-                breakout_system = get_breakout_system()
-
-                # Process breakouts using new modular system (non-blocking)
-                if breakout_system and breakout_system.is_running:
-                    # The modular system already processes data via data adapters
-                    logger.debug("Modular breakout system is active and processing data")
-                else:
-                    logger.debug("Modular breakout system not running - data will be processed when started")
-            except ImportError:
-                logger.debug("Real-time breakout detector not available")
-            except Exception as e:
-                logger.debug(f"Real-time breakout detection error: {e}")
-
-            # Log data reception
-            if is_snapshot:
-                logger.info(
-                    f"📸 Received initial snapshot with {update_count} instruments (ZERO-DELAY streaming active)"
-                )
-            elif self.update_count % 50 == 0:  # Less frequent logging for performance
-                logger.info(
-                    f"📊 Received update #{self.update_count} with {update_count} instruments (total: {self.data_count})"
-                )
-
-            # 🚀 BACKGROUND: All data processing happens in parallel (non-blocking)
-            # This includes enrichment, analytics, caching - UI already got raw data above
-            asyncio.create_task(
-                self._background_data_processing(feeds, is_snapshot, data)
-            )
-
-            logger.debug(
-                f"✅ ZERO-DELAY streaming + background processing initiated for {len(feeds)} instruments"
-            )
-
-    async def _background_data_processing(
-        self, feeds: dict, is_snapshot: bool, data: dict
-    ):
-        """Background processing that doesn't block the main data flow"""
+    async def _update_ui_cache_background(self, data: dict):
+        """🧹 CLEAN: Lightweight UI cache update in background (non-blocking)"""
         try:
-            # Legacy cache and registry updates (background only)
-            await asyncio.gather(
-                self._update_cache(feeds),
-                self._legacy_registry_update(feeds),
-                self._broadcast_live_data(feeds, is_snapshot),
-                return_exceptions=True,
-            )
+            # Extract feed count for metrics
+            feeds = data.get("feeds", {})
+            if feeds:
+                self.data_count += len(feeds)
+                self.update_count += 1
 
-            # Execute callbacks (background)
-            await self._execute_callbacks(
-                "price_update",
-                {
-                    "data": feeds,
-                    "is_snapshot": is_snapshot,
-                    "update_count": self.update_count,
-                    "timestamp": data.get("currentTs", datetime.now().isoformat()),
-                    "source": "centralized_background",
-                },
-            )
+                # Periodic logging (reduced frequency)
+                if self.update_count % 100 == 0:
+                    logger.info(f"📊 Processed {self.data_count} total feed updates")
+
+            # Only update UI cache - all business logic is in real-time hub
+            await self._update_instrument_registry_cache(data)
+
         except Exception as e:
-            logger.debug(f"Background processing error: {e}")
+            logger.error(f"❌ UI cache update failed: {e}")
+
+    async def _notify_connection_status(self, status_data: dict):
+        """🧹 CLEAN: Notify system callbacks about connection status"""
+        try:
+            if "connection_status" in self.system_callbacks:
+                for callback in self.system_callbacks["connection_status"]:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(status_data)
+                        else:
+                            callback(status_data)
+                    except Exception as e:
+                        logger.error(f"❌ Connection status callback error: {e}")
+        except Exception as e:
+            logger.error(f"❌ Connection status notification failed: {e}")
+
+    async def _notify_system_error(self, error_data: dict):
+        """🧹 CLEAN: Notify system callbacks about errors"""
+        try:
+            if "error" in self.system_callbacks:
+                for callback in self.system_callbacks["error"]:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(error_data)
+                        else:
+                            callback(error_data)
+                    except Exception as e:
+                        logger.error(f"❌ Error callback failed: {e}")
+        except Exception as e:
+            logger.error(f"❌ System error notification failed: {e}")
+
+    async def _execute_callbacks(self, event_type: str, event_data: dict):
+        """Execute registered callbacks for given event type"""
+        try:
+            if event_type in self.callbacks:
+                for callback in self.callbacks[event_type]:
+                    try:
+                        if asyncio.iscoroutinefunction(callback):
+                            await callback(event_data)
+                        else:
+                            callback(event_data)
+                        self.performance_metrics["callbacks_executed"] += 1
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Callback execution error for {event_type}: {e}"
+                        )
+        except Exception as e:
+            logger.error(f"❌ Failed to execute callbacks for {event_type}: {e}")
 
     async def _legacy_data_processing(self, feeds: dict, is_snapshot: bool, data: dict):
         """Legacy fallback processing"""
@@ -1192,119 +1247,54 @@ class CentralizedWebSocketManager:
         )
 
     async def _legacy_registry_update(self, feeds: dict):
-        """Legacy registry update (background only)"""
-        try:
-            from services.instrument_registry import instrument_registry
-
-            normalized_data = self._normalize_market_data(feeds)
-            if normalized_data:
-                instrument_registry.update_live_prices(normalized_data)
-        except Exception as e:
-            logger.debug(f"Legacy registry update error: {e}")
+        """🚀 DEPRECATED: Legacy registry updates now handled by realtime_data_hub"""
+        logger.debug(
+            "⚠️ DEPRECATED: _legacy_registry_update - use realtime_data_hub instead"
+        )
+        # This method is deprecated as registry updates are now handled by
+        # the realtime_data_hub through specialized service callbacks
+        pass
 
     async def _handle_live_feed_data(self, data: dict):
-        """Handle live_feed format data with ZERO-DELAY streaming"""
-        feeds = data.get("data", {})
-        update_count = len(feeds)
-        is_snapshot = data.get("is_snapshot", False)
-
-        if update_count > 0:
-            self.data_count += update_count
-            self.update_count += 1
-
-            # 🚀 CRITICAL: ZERO-DELAY streaming FIRST
-            try:
-                from services.realtime_data_streamer import realtime_streamer
-
-                await realtime_streamer.stream_raw_market_data(data)
-            except Exception as e:
-                logger.debug(f"Real-time streaming error: {e}")
-
-            if is_snapshot or self.update_count == 1:
-                logger.info(
-                    f"📸 Received initial snapshot with {update_count} instruments (ZERO-DELAY)"
-                )
-            elif self.update_count % 10 == 0:
-                logger.info(
-                    f"📊 Received update #{self.update_count} with {update_count} instruments (total: {self.data_count})"
-                )
-
-            # ⚡ PERFORMANCE FIX: Run cache updates and broadcasting in parallel for faster response
-            await asyncio.gather(
-                self._update_cache(feeds),
-                self._update_instrument_registry(feeds),
-                self._broadcast_live_data(feeds, is_snapshot),
-                return_exceptions=True,  # Don't let one failure block others
-            )
-
-            await self._execute_callbacks(
-                "price_update",
-                {
-                    "data": feeds,
-                    "is_snapshot": is_snapshot,
-                    "update_count": self.update_count,
-                    "timestamp": data.get("timestamp", datetime.now().isoformat()),
-                },
-            )
+        """🚀 DEPRECATED: Legacy method - data is now handled by realtime_data_hub only"""
+        logger.debug(
+            "⚠️ DEPRECATED: _handle_live_feed_data called - use realtime_data_hub instead"
+        )
+        # This method is deprecated as all data processing is now handled by
+        # the realtime_data_hub for zero-delay simultaneous distribution
+        pass
 
     async def _handle_direct_instrument_data(self, data: dict):
-        """Handle direct instrument data format with ZERO-DELAY streaming"""
-        is_snapshot = self.update_count == 0
-        update_count = len(data)
-        self.data_count += update_count
-        self.update_count += 1
-
-        # 🚀 CRITICAL: ZERO-DELAY streaming FIRST
-        try:
-            from services.realtime_data_streamer import realtime_streamer
-
-            await realtime_streamer.stream_raw_market_data(data)
-        except Exception as e:
-            logger.debug(f"Real-time streaming error: {e}")
-
-        logger.info(
-            f"📊 Received direct instrument data format with {update_count} instruments (ZERO-DELAY)"
+        """🚀 DEPRECATED: Legacy method - data is now handled by realtime_data_hub only"""
+        logger.debug(
+            "⚠️ DEPRECATED: _handle_direct_instrument_data called - use realtime_data_hub instead"
         )
-
-        await self._update_cache(data)
-        await self._update_instrument_registry(data)
-        await self._broadcast_live_data(data, is_snapshot)
-
-        await self._execute_callbacks(
-            "price_update",
-            {
-                "data": data,
-                "is_snapshot": is_snapshot,
-                "update_count": self.update_count,
-                "timestamp": datetime.now().isoformat(),
-            },
-        )
+        # This method is deprecated as all data processing is now handled by
+        # the realtime_data_hub for zero-delay simultaneous distribution
+        pass
 
     async def _update_instrument_registry(self, feed_data: dict):
         """✅ SIMPLE FIX: Send data directly to React frontend via unified manager"""
+
+        if not feed_data:
+            return
+
+        # 🚀 REMOVED: Redundant unified manager calls
+        # These are now handled by instrument_registry.update_live_prices() callbacks
+        # which provide ZERO DELAY for strategies and optimized UI batching
+        logger.debug(
+            f"⚡ OPTIMIZED: Data will be broadcast via instrument registry callbacks"
+        )
+
+        # Original registry update (background)
         try:
-            if not feed_data:
-                return
+            from services.instrument_registry import instrument_registry
 
-            # 🚀 REMOVED: Redundant unified manager calls
-            # These are now handled by instrument_registry.update_live_prices() callbacks
-            # which provide ZERO DELAY for strategies and optimized UI batching
-            logger.debug(
-                f"⚡ OPTIMIZED: Data will be broadcast via instrument registry callbacks"
-            )
-
+            normalized_data = self._normalize_market_data(feed_data)
+            if normalized_data:
+                instrument_registry.update_live_prices(normalized_data)
         except Exception as e:
-            logger.error(f"❌ Error in optimized broadcast: {e}")
-
-            # Original registry update (background)
-            try:
-                from services.instrument_registry import instrument_registry
-
-                normalized_data = self._normalize_market_data(feed_data)
-                if normalized_data:
-                    instrument_registry.update_live_prices(normalized_data)
-            except Exception as e:
-                logger.warning(f"⚠️ Registry update error: {e}")
+            logger.warning(f"⚠️ Registry update error: {e}")
 
         except Exception as e:
             logger.error(f"❌ Error in _update_instrument_registry: {e}")
@@ -2200,6 +2190,79 @@ class CentralizedWebSocketManager:
             f"📡 Broadcasted market status: {self.market_status} (active: {self.active_segments})"
         )
 
+    def _get_symbol_from_instrument_key(self, instrument_key: str) -> str:
+        """Extract symbol from instrument key"""
+        try:
+            # Handle standard format: NSE_EQ|INE001A01036 or NSE_INDEX|Nifty 50
+            if "|" in instrument_key:
+                parts = instrument_key.split("|", 1)
+                if len(parts) == 2:
+                    exchange_segment, identifier = parts
+
+                    # Handle indices - they usually have readable names
+                    if "INDEX" in exchange_segment.upper():
+                        # Map common index identifiers to standard symbols
+                        index_mapping = {
+                            "Nifty 50": "NIFTY",
+                            "Nifty Bank": "BANKNIFTY",
+                            "Nifty Next 50": "NIFTYNXT50",
+                            "Nifty Fin Service": "FINNIFTY",
+                            "BSE SENSEX": "SENSEX",
+                            "Nifty Midcap 50": "NIFTYMIDCAP50",
+                            "Nifty Smallcap 50": "NIFTYSMLCAP50",
+                        }
+                        return index_mapping.get(
+                            identifier, identifier.replace(" ", "").upper()
+                        )
+
+                    # Handle equity instruments - extract from ISIN or use original
+                    elif "EQ" in exchange_segment.upper():
+                        # If identifier looks like ISIN, return as is
+                        # Otherwise return the part after last delimiter
+                        if identifier.startswith("INE") and len(identifier) > 10:
+                            return identifier  # Keep ISIN as is for now
+                        else:
+                            return identifier
+
+            # Fallback: return the original key
+            return instrument_key
+
+        except Exception:
+            return instrument_key
+
+    def _enrich_feed_data_with_symbols(self, feed_data: dict) -> dict:
+        """Enrich feed data with symbol names for frontend consumption"""
+        enriched_data = {}
+
+        for instrument_key, price_data in feed_data.items():
+            # Create enriched price data
+            enriched_price_data = dict(price_data)
+
+            # Find symbol from selected stocks mapping first (priority)
+            symbol_found = None
+            for symbol, stock_data in self.selected_stocks_for_trading.items():
+                if stock_data.get("instrument_key") == instrument_key:
+                    symbol_found = symbol
+                    break
+
+            # If not found in trading stocks, try to extract from instrument key
+            if not symbol_found:
+                symbol_found = self._get_symbol_from_instrument_key(instrument_key)
+
+            # Add symbol information
+            if symbol_found:
+                enriched_price_data["symbol"] = symbol_found
+
+            # Always include the instrument_key for dual lookup
+            enriched_price_data["instrument_key"] = instrument_key
+
+            # Store under both keys for maximum compatibility
+            enriched_data[instrument_key] = enriched_price_data
+            if symbol_found and symbol_found != instrument_key:
+                enriched_data[symbol_found] = enriched_price_data
+
+        return enriched_data
+
     async def _broadcast_live_data(self, feed_data: dict, is_snapshot: bool = False):
         """Broadcast live data to clients"""
         if not feed_data:
@@ -2214,10 +2277,13 @@ class CentralizedWebSocketManager:
         timestamp = datetime.now().isoformat()
         clients_updated = 0
 
+        # 🚀 ENHANCEMENT: Enrich data with symbols for frontend compatibility
+        enriched_feed_data = self._enrich_feed_data_with_symbols(feed_data)
+
         # Send to dashboard clients (all data)
         dashboard_payload = {
             "type": "dashboard_update",
-            "data": feed_data,
+            "data": enriched_feed_data,
             "market_open": self.market_status == "open",
             "data_source": "CENTRALIZED_WS",
             "timestamp": timestamp,
@@ -2236,7 +2302,9 @@ class CentralizedWebSocketManager:
                 continue
 
             relevant_data = {
-                key: value for key, value in feed_data.items() if key in subscribed_keys
+                key: value
+                for key, value in enriched_feed_data.items()
+                if key in subscribed_keys
             }
             if relevant_data:
                 trading_payload = {
@@ -2425,29 +2493,33 @@ class CentralizedWebSocketManager:
 
             self.is_running = False
 
-    async def _execute_callbacks(self, event_type: str, data: dict):
-        """Execute registered callbacks for an event type"""
-        if event_type not in self.callbacks:
-            return
+    def register_system_callback(self, event_type: str, callback: CallbackFunction):
+        """🧹 CLEAN: Register system-level callbacks (connection, error only)"""
+        if event_type not in self.system_callbacks:
+            logger.warning(
+                f"⚠️ Invalid callback type: {event_type}. Only 'connection_status' and 'error' allowed."
+            )
+            return False
 
-        callbacks = self.callbacks[event_type]
-        if not callbacks:
-            return
+        self.system_callbacks[event_type].append(callback)
+        logger.info(f"✅ Registered {event_type} system callback")
+        return True
 
-        if "timestamp" not in data:
-            data["timestamp"] = datetime.now().isoformat()
+    async def _update_instrument_registry_cache(self, data: dict):
+        """🧹 CLEAN: Update instrument registry cache for UI (lightweight)"""
+        try:
+            # Only update the instrument registry for UI display
+            # This is separate from business logic which goes through real-time hub
+            from services.instrument_registry import get_instrument_registry
 
-        for callback in callbacks:
-            try:
-                if asyncio.iscoroutinefunction(callback):
-                    await callback(data)
-                else:
-                    callback(data)
+            registry = get_instrument_registry()
+            if hasattr(registry, "update_from_websocket_data"):
+                await registry.update_from_websocket_data(data)
 
-                self.performance_metrics["callbacks_executed"] += 1
-
-            except Exception as e:
-                logger.error(f"❌ Error in {event_type} callback: {e}")
+        except ImportError:
+            logger.debug("📝 Instrument registry not available for cache update")
+        except Exception as e:
+            logger.error(f"❌ Instrument registry cache update failed: {e}")
 
     async def _send_reconnection_warning_email(self):
         """Send warning email when approaching max reconnection attempts"""
@@ -2506,6 +2578,32 @@ class CentralizedWebSocketManager:
         except Exception as e:
             logger.error(f"❌ Error sending max reconnections email: {e}")
 
+    async def publish(self, data: Dict[str, Any]) -> None:
+        """Publish data to all registered callbacks - NON-BLOCKING
+
+        This is the main entry point for external services (like Upstox WS client)
+        to publish data to all registered consumers.
+        """
+        try:
+            # Update metrics
+            self.performance_metrics["messages_received"] += 1
+            self.last_data_received = datetime.now()
+
+            # Handle the market data (this will trigger callbacks)
+            await self._handle_market_data(data)
+
+        except Exception as e:
+            logger.error(f"❌ Error in publish: {e}")
+
+    async def _broadcast_raw_data_to_all_services(self, raw_data: dict):
+        """🚀 DEPRECATED: Raw data broadcasting now handled by realtime_data_hub"""
+        logger.debug(
+            "⚠️ DEPRECATED: _broadcast_raw_data_to_all_services - use realtime_data_hub instead"
+        )
+        # This method is deprecated as all raw data broadcasting is now handled by
+        # the realtime_data_hub for zero-delay simultaneous distribution
+        pass
+
     # ===== PUBLIC API METHODS =====
 
     def register_callback(self, event_type: str, callback: CallbackFunction):
@@ -2522,6 +2620,17 @@ class CentralizedWebSocketManager:
         if event_type in self.callbacks and callback in self.callbacks[event_type]:
             self.callbacks[event_type].remove(callback)
             logger.info(f"✅ Unregistered callback for {event_type}")
+            return True
+        return False
+
+    def unregister_system_callback(self, event_type: str, callback: CallbackFunction):
+        """🧹 CLEAN: Unregister system-level callback"""
+        if event_type not in self.system_callbacks:
+            return False
+
+        if callback in self.system_callbacks[event_type]:
+            self.system_callbacks[event_type].remove(callback)
+            logger.info(f"✅ Unregistered {event_type} system callback")
             return True
         return False
 
@@ -2683,10 +2792,119 @@ class CentralizedWebSocketManager:
 
         return True
 
+    # 🚀 HFT KAFKA INTEGRATION METHODS
+
+    async def initialize_hft_kafka(self) -> None:
+        """Initialize HFT Kafka producer for ultra-low latency streaming"""
+        if self._hft_initialized:
+            return
+
+        try:
+            from services.hft.producer import get_hft_producer
+            from services.hft.subscription_manager import get_subscription_manager
+            from services.hft.advance_decline_service import get_advance_decline_service
+            from services.hft.market_breadth_analytics import (
+                get_market_breadth_analytics,
+            )
+            from services.hft.subscription_manager import (
+                MarketSegment,
+                SubscriptionType,
+            )
+
+            # Initialize HFT producer
+            self.hft_producer = await get_hft_producer()
+
+            # Initialize subscription manager
+            self.hft_subscription_manager = get_subscription_manager()
+
+            # Initialize ADR and analytics services
+            adr_service = get_advance_decline_service()
+            analytics_service = get_market_breadth_analytics()
+
+            # Subscribe to market segments for ADR calculation
+            market_segments = [
+                MarketSegment.NIFTY_50,
+                MarketSegment.NIFTY_500,
+                MarketSegment.BANKING,
+                MarketSegment.IT,
+            ]
+
+            await adr_service.initialize_market_segments(market_segments)
+            await analytics_service.initialize_analytics(market_segments)
+
+            self._hft_initialized = True
+
+            logger.info(
+                "✅ HFT Kafka system initialized successfully (Producer + ADR + Analytics)"
+            )
+
+        except ImportError:
+            logger.warning(
+                "⚠️ HFT Kafka module not available - continuing without HFT streaming"
+            )
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize HFT Kafka producer: {e}")
+
+    async def _hft_kafka_stream(self, data: dict, start_time_ns: int) -> None:
+        """
+        🚀 HFT Kafka streaming with zero-copy optimizations
+
+        Args:
+            data: Market data from WebSocket
+            start_time_ns: Processing start timestamp in nanoseconds
+        """
+        try:
+            if not self.hft_producer:
+                return
+
+            # Stream market data with HFT optimizations
+            await self.hft_producer.send_market_data(
+                data=data, source_timestamp_ns=start_time_ns
+            )
+
+            # Update HFT performance metrics
+            processing_time_ns = time.perf_counter_ns() - start_time_ns
+
+            # Log performance warnings for latencies > 1ms
+            if processing_time_ns > 1_000_000:
+                logger.warning(
+                    f"⚠️ High HFT latency: {processing_time_ns / 1_000_000:.2f}ms"
+                )
+
+        except Exception as e:
+            logger.error(f"❌ HFT Kafka streaming error: {e}")
+
+    async def get_hft_performance_stats(self) -> dict:
+        """Get HFT Kafka producer performance statistics"""
+        if not self.hft_producer:
+            return {"status": "not_initialized"}
+
+        try:
+            return await self.hft_producer.get_performance_stats()
+        except Exception as e:
+            logger.error(f"❌ Error getting HFT stats: {e}")
+            return {"error": str(e)}
+
+    async def cleanup_hft_kafka(self) -> None:
+        """Cleanup HFT Kafka resources"""
+        if self.hft_producer:
+            try:
+                from services.hft.producer import cleanup_hft_producer
+
+                await cleanup_hft_producer()
+                self.hft_producer = None
+                self._hft_initialized = False
+                logger.info("✅ HFT Kafka producer cleaned up")
+            except Exception as e:
+                logger.error(f"❌ Error cleaning up HFT producer: {e}")
+
     async def stop(self):
-        """Stop the centralized manager"""
+        """Stop the centralized manager and cleanup HFT Kafka resources"""
         logger.info("🛑 Stopping centralized WebSocket manager")
         self.is_running = False
+
+        # 🚀 Cleanup HFT Kafka producer first
+        await self.cleanup_hft_kafka()
 
         if self.ws_client:
             self.ws_client.stop()
@@ -2959,13 +3177,12 @@ class CentralizedWebSocketManager:
             return feeds
 
     async def _broadcast_realtime_prices(self, enriched_feeds: dict):
-        """🚀 REMOVED: Redundant price broadcasting - now handled by instrument registry callbacks"""
-        # This method is now redundant as price broadcasting is handled by:
-        # instrument_registry.update_live_prices() -> _execute_real_time_callbacks() -> UI callbacks
+        """🚀 DEPRECATED: Redundant price broadcasting - now handled by realtime_data_hub"""
         logger.debug(
-            f"⚡ OPTIMIZED: Price broadcasting handled by instrument registry ({len(enriched_feeds)} feeds)"
+            f"⚠️ DEPRECATED: Price broadcasting now handled by realtime_data_hub ({len(enriched_feeds)} feeds)"
         )
-        return  # Early return - no processing needed
+        # This method is deprecated as all broadcasting is now handled by the realtime_data_hub
+        pass
 
     async def _process_analytics_background(
         self, feeds: dict, enriched_feeds: dict, is_snapshot: bool, data: dict
@@ -3003,6 +3220,34 @@ class CentralizedWebSocketManager:
             logger.debug(
                 f"📊 BACKGROUND: Analytics processing started for {len(enriched_feeds)} instruments"
             )
+
+            # 🚀 Simple Kafka System: Publish analytics data
+            try:
+                from services.simple_kafka_system import get_kafka_system
+
+                kafka_system = get_kafka_system()
+
+                # Check if Kafka producer is initialized
+                if kafka_system.producer is None:
+                    logger.debug(
+                        "🔄 Kafka producer not yet initialized, skipping analytics message"
+                    )
+                else:
+                    # Publish processed analytics data
+                    asyncio.create_task(
+                        kafka_system.publish_message(
+                            topic="trading.analytics.market",
+                            message=dashboard_data,
+                            key="analytics_update",
+                        )
+                    )
+
+                logger.debug("📊 Analytics data published to Kafka")
+
+            except ImportError:
+                logger.debug("⚠️ Simple Kafka system not available for analytics")
+            except Exception as e:
+                logger.error(f"❌ Analytics Kafka publishing failed: {e}")
 
             # 🚀 REMOVED: Redundant unified manager call
             # Dashboard updates now handled by instrument registry UI callbacks
@@ -3399,6 +3644,24 @@ class CentralizedWebSocketManager:
 
         except Exception as e:
             logger.error(f"❌ Error broadcasting to all clients: {e}")
+
+
+# Compatibility helper function for external services
+def register_market_data_callback(callback: CallbackFunction) -> bool:
+    """Compatibility helper for registering market data callbacks
+
+    This function allows services to register callbacks for RAW live feed data.
+    """
+    try:
+        # Register for live_feed to get RAW data immediately
+        success = centralized_manager.register_callback("live_feed", callback)
+        logger.info(
+            f"🔗 Live feed callback registered via helper: {callback.__name__ if hasattr(callback, '__name__') else str(callback)}"
+        )
+        return success
+    except Exception as e:
+        logger.error(f"❌ Failed to register live feed callback: {e}")
+        return False
 
 
 # Create singleton instance

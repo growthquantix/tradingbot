@@ -51,6 +51,14 @@ class MarketScheduleService:
         self.is_running = False
         self.cache = {}  # In-memory cache fallback
         
+        # 🛡️ STATE TRACKING: Prevent redundant executions
+        self.daily_tasks_completed = {
+            "early_morning_preparation": False,
+            "premarket_analysis": False,
+            "trading_preparation": False,
+        }
+        self.current_market_date = None
+        
         # ✅ INTEGRATION: Auto-trading components
         self.auto_trading_coordinator = None
         self.fibonacci_strategy = None
@@ -158,32 +166,48 @@ class MarketScheduleService:
                 current_time = datetime.now(self.ist).time()
                 current_date = datetime.now(self.ist).date()
 
+                # 🛡️ RESET STATE: Check if it's a new trading day
+                if self.current_market_date != current_date:
+                    self.current_market_date = current_date
+                    self.daily_tasks_completed = {
+                        "early_morning_preparation": False,
+                        "premarket_analysis": False,
+                        "trading_preparation": False,
+                    }
+                    logger.info(f"📅 New trading day: {current_date} - Reset task states")
+
                 # Check if it's a weekday (Monday=0, Sunday=6)
                 if datetime.now(self.ist).weekday() >= 5:
                     logger.info("📅 Weekend - Market closed")
                     await asyncio.sleep(3600)  # Sleep for 1 hour
                     continue
 
-                # Early morning preparation (8:00 AM) - ADD THIS BLOCK
+                # Early morning preparation (8:00 AM) - ONCE PER DAY
                 if (
                     current_time >= self.early_preparation
                     and current_time < self.premarket_start
+                    and not self.daily_tasks_completed["early_morning_preparation"]
                 ):
                     await self._run_early_morning_preparation()
+                    self.daily_tasks_completed["early_morning_preparation"] = True
 
-                # Pre-market analysis (9:00 AM)
+                # Pre-market analysis (9:00 AM) - ONCE PER DAY
                 if (
                     current_time >= self.premarket_start
                     and current_time < self.market_open
+                    and not self.daily_tasks_completed["premarket_analysis"]
                 ):
                     await self._run_premarket_analysis()
+                    self.daily_tasks_completed["premarket_analysis"] = True
 
-                # Trading preparation (9:15-9:30 AM)
+                # Trading preparation (9:15-9:30 AM) - ONCE PER DAY
                 elif (
                     current_time >= self.market_open
                     and current_time < self.trading_start
+                    and not self.daily_tasks_completed["trading_preparation"]
                 ):
                     await self._prepare_trading_session()
+                    self.daily_tasks_completed["trading_preparation"] = True
 
                 # Active trading (9:30 AM - 3:30 PM)
                 elif (
@@ -203,13 +227,18 @@ class MarketScheduleService:
                 await asyncio.sleep(300)  # Wait 5 minutes on error
 
     async def _run_early_morning_preparation(self):
-        """FIXED: Run at 8:00 AM - FNO service ALWAYS runs BEFORE instrument service"""
+        """FIXED: Run at 8:00 AM - FNO service with MONTHLY refresh logic"""
         logger.info("🌅 Starting early morning preparation...")
 
         try:
-            # Check if it's Monday (weekday 0) for weekly FNO refresh
-            current_weekday = datetime.now(self.ist).weekday()
-            should_refresh_fno = current_weekday == 0  # Monday only
+            # Check if it's first Monday of the month for MONTHLY FNO refresh
+            current_date = datetime.now(self.ist)
+            current_weekday = current_date.weekday()
+            current_day = current_date.day
+            
+            # Monthly refresh: First Monday of the month (day 1-7 and Monday)
+            is_first_monday = current_weekday == 0 and 1 <= current_day <= 7
+            should_refresh_fno = is_first_monday
 
             # FIXED: ALWAYS run FNO service first (either refresh or verify existing data)
             logger.info("🔧 Step 1: FNO stock list preparation...")
@@ -218,38 +247,44 @@ class MarketScheduleService:
             fno_service = FnoStockListService()
 
             if should_refresh_fno:
-                # WEEKLY: Full refresh on Mondays
-                logger.info("📊 Running weekly FNO stock list refresh (Monday)...")
+                # MONTHLY: Full refresh on first Monday of the month
+                logger.info("📊 Running MONTHLY FNO stock list refresh (First Monday of month)...")
                 fno_result = fno_service.update_fno_list()
 
                 if fno_result["status"] == "success":
                     logger.info(
-                        f"✅ Weekly FNO refresh: {fno_result['total_stocks']} stocks"
+                        f"✅ Monthly FNO refresh: {fno_result['total_stocks']} stocks"
                     )
                 else:
                     logger.error(
-                        f"❌ Weekly FNO refresh failed: {fno_result.get('error')}"
+                        f"❌ Monthly FNO refresh failed: {fno_result.get('error')}"
                     )
                     # Don't continue if FNO data is corrupted
                     return
             else:
-                # DAILY: Verify existing FNO data is available
-                logger.info(f"🔍 Verifying existing FNO data (Tuesday-Sunday)...")
+                # DAILY: Verify existing FNO data is available (NO REFRESH)
+                logger.info(f"🔍 Verifying existing FNO data (non-first-Monday)...")
                 existing_stocks = fno_service.load_from_json()
 
                 if not existing_stocks:
                     logger.warning(
-                        "⚠️ No existing FNO data found, running emergency refresh..."
+                        "⚠️ No existing FNO data found, checking data age before emergency refresh..."
                     )
-                    fno_result = fno_service.update_fno_list()
-                    if fno_result["status"] != "success":
-                        logger.error(
-                            f"❌ Emergency FNO refresh failed: {fno_result.get('error')}"
-                        )
+                    # Only refresh if absolutely no data exists AND it's a weekday
+                    if current_weekday < 5:  # Monday to Friday
+                        logger.info("🚨 Running emergency FNO refresh (no data found on weekday)...")
+                        fno_result = fno_service.update_fno_list()
+                        if fno_result["status"] != "success":
+                            logger.error(
+                                f"❌ Emergency FNO refresh failed: {fno_result.get('error')}"
+                            )
+                            return
+                    else:
+                        logger.info("Weekend - skipping emergency refresh, will wait for next first Monday")
                         return
                 else:
                     logger.info(
-                        f"✅ FNO data verified: {len(existing_stocks)} stocks available"
+                        f"✅ FNO data verified: {len(existing_stocks)} stocks available (no refresh needed)"
                     )
 
             # FIXED: Step 2 now ALWAYS runs AFTER FNO service has completed successfully
@@ -977,7 +1012,25 @@ class MarketScheduleService:
 
             # 1. Initialize Auto-Trading Coordinator
             from services.auto_trading_coordinator import AutoTradingCoordinator
-            self.auto_trading_coordinator = AutoTradingCoordinator()
+            
+            # Create default config for auto-trading coordinator
+            default_config = {
+                'user_id': 1,
+                'mode': 'PAPER_TRADING',
+                'max_positions': 5,
+                'max_daily_loss': 50000.0,
+                'risk_parameters': {
+                    'max_risk_per_trade': 0.02,
+                    'stop_loss_pct': 2.0
+                },
+                'strategy_config': {
+                    'fibonacci_enabled': True,
+                    'nifty_enabled': True
+                },
+                'brokers': {}
+            }
+            
+            self.auto_trading_coordinator = AutoTradingCoordinator(default_config)
             
             # 2. Initialize Fibonacci Strategy for selected stocks
             await self._initialize_fibonacci_strategy()

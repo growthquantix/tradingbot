@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from database.connection import get_db
 from services.auth_service import get_current_user
 from services.dashboard_ohlc_service import DashboardOHLCService
-from services.trading_services.trading_engine import TradingEngine
 import json
 import logging
 
@@ -14,7 +13,6 @@ router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 # Global instances
 dashboard_service = DashboardOHLCService()
-trading_engine = TradingEngine()
 
 
 @router.get("/selected-stocks")

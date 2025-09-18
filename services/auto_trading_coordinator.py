@@ -154,15 +154,32 @@ class AutoTradingCoordinator:
             
             # Initialize database service
             self.db_service = TradingDatabaseService()
-            await self.db_service.initialize()
+            if hasattr(self.db_service, 'initialize'):
+                await self.db_service.initialize()
+            else:
+                logger.info("✅ Database service ready (no initialization method needed)")
             
             # Initialize WebSocket manager
             self.ws_manager = CentralizedWebSocketManager()
             await self.ws_manager.initialize()
             
-            # Initialize data processing service
-            self.data_service = AutoTradingDataService()
-            await self.data_service.initialize()
+            # Initialize data processing service with error handling
+            try:
+                self.data_service = AutoTradingDataService()
+                data_service_initialized = await self.data_service.initialize()
+                
+                if data_service_initialized:
+                    # Start the data service for live data processing
+                    await self.data_service.start_service()
+                    logger.info("✅ Data processing service started successfully")
+                else:
+                    logger.error("❌ Data service initialization failed")
+                    raise RuntimeError("Data service initialization failed")
+                    
+            except Exception as e:
+                logger.error(f"❌ Critical error initializing data service: {e}")
+                # Don't fail the entire system, but log the issue
+                self.data_service = None
             
             # Initialize stock selection service
             self.stock_selection_service = AutoStockSelectionService(self.db_service)
@@ -171,11 +188,14 @@ class AutoTradingCoordinator:
             self.fibonacci_strategy = FibonacciEMAStrategy()
             self.risk_manager = DynamicRiskReward()
             
-            # Initialize NIFTY 09:40 strategy
-            from services.websocket.auto_trading_websocket import get_websocket_manager
-            websocket_manager = await get_websocket_manager()
-            await initialize_nifty_strategy(websocket_manager)
-            self.nifty_strategy = await get_nifty_strategy_integration()
+            # Initialize NIFTY 09:40 strategy (with error handling)
+            try:
+                from services.strategies.nifty_09_40_integration import get_nifty_strategy_integration, initialize_nifty_strategy
+                self.nifty_strategy = await get_nifty_strategy_integration()
+                logger.info("✅ NIFTY 09:40 strategy initialized")
+            except ImportError as e:
+                logger.warning(f"⚠️ NIFTY 09:40 strategy not available: {e}")
+                self.nifty_strategy = None
             
             # Initialize broker integration
             self.broker_manager = BrokerIntegrationManager()
@@ -260,11 +280,12 @@ class AutoTradingCoordinator:
             # Order manager callbacks
             self.order_manager.add_order_callback(self._handle_order_event)
             
-            # Data service callbacks
-            await self.data_service.register_fibonacci_callback(
-                "MAIN_STRATEGY", 
-                self._handle_fibonacci_signal
-            )
+            # Data service callbacks (if available)
+            if self.data_service:
+                await self.data_service.register_fibonacci_callback(
+                    "MAIN_STRATEGY", 
+                    self._handle_fibonacci_signal
+                )
             
             logger.info("Inter-service callbacks configured")
             
@@ -341,13 +362,197 @@ class AutoTradingCoordinator:
         try:
             instrument_keys = [stock['instrument_key'] for stock in selected_stocks]
             
-            # Priority subscription for selected stocks
-            await self.ws_manager.priority_subscription(selected_stocks)
+            # Primary: Subscribe to Live Feed Manager for ZERO-DELAY access
+            try:
+                from services.live_feed_manager import subscribe_to_live_feed
+                
+                success = await subscribe_to_live_feed(
+                    service_name="auto_trading_coordinator",
+                    callback=self._process_live_market_data,
+                    instrument_keys=instrument_keys,
+                    priority=1,  # Highest priority for trading
+                    filter_func=self._filter_trading_data
+                )
+                
+                if success:
+                    logger.info(f"✅ Subscribed to {len(instrument_keys)} instruments via Live Feed Manager (ZERO-DELAY)")
+                else:
+                    logger.warning("⚠️ Failed to subscribe to Live Feed Manager")
+                    
+            except ImportError as e:
+                logger.warning(f"❌ Live Feed Manager not available: {e}")
             
-            logger.info(f"Subscribed to market data for {len(instrument_keys)} instruments")
+            # Fallback: Add instruments to data service for processing (if available)
+            if self.data_service:
+                self.data_service.add_instruments(instrument_keys, priority=True)
+                logger.info(f"✅ Fallback: Added {len(instrument_keys)} instruments to data service")
+            else:
+                logger.warning("⚠️ Data service not available, skipping instrument registration")
+            
+            # Priority subscription for selected stocks via WebSocket manager
+            if self.ws_manager:
+                await self.ws_manager.priority_subscription(selected_stocks)
+                logger.info(f"✅ Subscribed to WebSocket data for {len(instrument_keys)} instruments")
+            else:
+                logger.warning("⚠️ WebSocket manager not available")
             
         except Exception as e:
-            logger.error(f"Error subscribing to market data: {e}")
+            logger.error(f"❌ Error subscribing to market data: {e}")
+    
+    def _filter_trading_data(self, live_data) -> bool:
+        """Filter function for trading-relevant market data"""
+        try:
+            # Only process during active trading hours
+            if self.system_state not in [TradingSystemState.ACTIVE]:
+                return False
+            
+            # Filter by minimum volume threshold
+            if live_data.volume < 1000:
+                return False
+            
+            # Filter by minimum price movement for efficiency
+            if abs(live_data.change_percent) < 0.1:  # 0.1% threshold
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error in trading data filter: {e}")
+            return False
+    
+    async def _process_live_market_data(self, live_data):
+        """Process live market data for trading decisions"""
+        try:
+            # Update current prices cache
+            if not hasattr(self.current_session, 'current_prices'):
+                self.current_session.current_prices = {}
+                
+            self.current_session.current_prices[live_data.instrument_key] = {
+                'ltp': float(live_data.ltp),
+                'change_percent': float(live_data.change_percent),
+                'volume': live_data.volume,
+                'timestamp': live_data.timestamp
+            }
+            
+            # Process for strategy signals
+            await self._analyze_trading_signal(live_data)
+            
+            # Update position monitoring
+            if hasattr(self, 'position_monitor') and self.position_monitor:
+                await self.position_monitor.update_live_price(
+                    live_data.instrument_key,
+                    float(live_data.ltp)
+                )
+            
+            # Update risk monitoring
+            await self._update_risk_metrics(live_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing live market data: {e}")
+    
+    async def _analyze_trading_signal(self, live_data):
+        """Analyze live data for trading signals"""
+        try:
+            # Check if we have an active strategy for this instrument
+            if not hasattr(self, 'active_strategies'):
+                return
+            
+            # Process through Fibonacci + EMA strategy
+            if hasattr(self, 'fibonacci_strategy') and self.fibonacci_strategy:
+                try:
+                    # Convert live data to strategy format
+                    price_data = {
+                        'instrument_key': live_data.instrument_key,
+                        'symbol': live_data.symbol,
+                        'ltp': float(live_data.ltp),
+                        'volume': live_data.volume,
+                        'change_percent': float(live_data.change_percent),
+                        'timestamp': live_data.timestamp
+                    }
+                    
+                    # Generate signal
+                    signal = await self.fibonacci_strategy.generate_signal(price_data)
+                    
+                    if signal and hasattr(signal, 'action') and signal.action in ['BUY', 'SELL']:
+                        logger.info(f"🎯 Trading signal generated: {signal.action} {live_data.symbol} at {live_data.ltp}")
+                        await self._execute_trading_signal(signal, live_data)
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error in strategy signal generation: {e}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error analyzing trading signal: {e}")
+    
+    async def _execute_trading_signal(self, signal, live_data):
+        """Execute trading signal with risk management"""
+        try:
+            # Check if we can place new trades
+            if not self._can_place_new_trade():
+                logger.warning(f"⚠️ Cannot place new trade - limits reached")
+                return
+            
+            # Execute via unified trading executor
+            if hasattr(self, 'unified_executor') and self.unified_executor:
+                try:
+                    result = await self.unified_executor.execute_trade_signal(
+                        signal=signal,
+                        live_data=live_data,
+                        risk_parameters=self.current_session.risk_parameters
+                    )
+                    
+                    if result and result.get('success'):
+                        logger.info(f"✅ Trade executed: {result.get('order_id')} for {live_data.symbol}")
+                        self.current_session.trades_count += 1
+                    else:
+                        logger.warning(f"⚠️ Trade execution failed: {result.get('error', 'Unknown error')}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error in unified executor: {e}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error executing trading signal: {e}")
+    
+    async def _update_risk_metrics(self, live_data):
+        """Update risk metrics based on live data"""
+        try:
+            # Update current P&L if we have positions
+            if hasattr(self, 'current_positions') and self.current_positions:
+                for position in self.current_positions:
+                    if position.get('instrument_key') == live_data.instrument_key:
+                        # Calculate unrealized P&L
+                        entry_price = position.get('entry_price', 0)
+                        current_price = float(live_data.ltp)
+                        quantity = position.get('quantity', 0)
+                        
+                        if entry_price > 0 and quantity != 0:
+                            unrealized_pnl = (current_price - entry_price) * quantity
+                            position['unrealized_pnl'] = unrealized_pnl
+                            position['current_price'] = current_price
+            
+        except Exception as e:
+            logger.error(f"❌ Error updating risk metrics: {e}")
+    
+    def _can_place_new_trade(self) -> bool:
+        """Check if we can place a new trade based on limits"""
+        try:
+            # Check position count limit
+            current_positions = len(getattr(self, 'current_positions', []))
+            if current_positions >= self.current_session.max_positions:
+                return False
+            
+            # Check daily loss limit
+            if abs(self.current_session.total_pnl) >= self.current_session.max_daily_loss:
+                return False
+            
+            # Check if system is active
+            if self.system_state != TradingSystemState.ACTIVE:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking trade limits: {e}")
+            return False
     
     async def _market_data_processor(self):
         """Main market data processing loop"""
@@ -357,8 +562,12 @@ class AutoTradingCoordinator:
                     await asyncio.sleep(1.0)
                     continue
                 
-                # Process incoming market data
-                await self.data_service.process_market_data_batch()
+                # Process incoming market data (if data service available)
+                if self.data_service:
+                    await self.data_service.process_market_data_batch()
+                else:
+                    # No data service available, sleep longer
+                    await asyncio.sleep(1.0)
                 
                 await asyncio.sleep(0.1)  # 100ms processing cycle
                 
@@ -394,9 +603,14 @@ class AutoTradingCoordinator:
                 symbol = stock['symbol']
                 instrument_key = stock['instrument_key']
                 
+                # Skip if data service not available
+                if not self.data_service:
+                    continue
+                
                 # Get current market data
                 current_price = await self.data_service.get_current_price(instrument_key)
                 if not current_price:
+                    logger.debug(f"No current price for {symbol}")
                     continue
                 
                 # Get OHLC data for strategy
@@ -404,11 +618,15 @@ class AutoTradingCoordinator:
                 ohlc_5m = await self.data_service.get_ohlc_data(instrument_key, '5m', 50)
                 
                 if ohlc_1m.empty or ohlc_5m.empty:
+                    logger.debug(f"Insufficient OHLC data for {symbol}")
                     continue
+                
+                # Extract LTP from current price data
+                current_ltp = current_price.get('ltp', current_price.get('last_price', 0.0))
                 
                 # Generate Fibonacci signal
                 signal = await self.fibonacci_strategy.generate_signal(
-                    ohlc_1m, ohlc_5m, current_price, symbol
+                    ohlc_1m, ohlc_5m, current_ltp, symbol
                 )
                 
                 if signal and signal.strength >= 70:  # High-confidence signals only
@@ -416,7 +634,7 @@ class AutoTradingCoordinator:
                     
                     # Check if we can execute the signal
                     if await self._can_execute_signal(session, signal):
-                        await self._execute_fibonacci_signal(session, signal, symbol, current_price)
+                        await self._execute_fibonacci_signal(session, signal, symbol, current_ltp)
                 
         except Exception as e:
             logger.error(f"Error generating session signals: {e}")
@@ -729,22 +947,42 @@ class AutoTradingCoordinator:
             
         except Exception as e:
             logger.error(f"Error calculating position size: {e}")
-            return 50, 50  # Default fallback
+            logger.error("❌ No valid support/resistance levels found")
+        return None, None
     
     async def _resolve_option_contract(self, symbol: str, option_type: str, 
                                      current_price: float, fibonacci_level: str) -> Optional[Dict]:
         """Resolve option contract details"""
         try:
             # This would typically use option service to get ATM contract
-            # For now, return mock data structure
-            strike_price = int(current_price / 50) * 50  # Round to nearest 50
+            # Get actual strike price from option service
+            if hasattr(self, 'option_service') and self.option_service:
+                try:
+                    option_chain = await self.option_service.get_option_chain(symbol)
+                    if option_chain and 'data' in option_chain:
+                        # Find ATM strike based on current price
+                        strikes = option_chain['data'].get('strikes', [])
+                        if strikes:
+                            atm_strike = min(strikes, key=lambda x: abs(x - current_price))
+                            
+                            # Get actual instrument details
+                            for strike_data in option_chain['data'].get('options', []):
+                                if (strike_data.get('strike') == atm_strike and 
+                                    strike_data.get('option_type').upper() == option_type.upper()):
+                                    
+                                    return {
+                                        "instrument_key": strike_data.get('instrument_key'),
+                                        "strike_price": atm_strike,
+                                        "option_type": option_type,
+                                        "symbol": symbol,
+                                        "expiry": strike_data.get('expiry'),
+                                        "lot_size": strike_data.get('lot_size', 1)
+                                    }
+                except Exception as e:
+                    logger.error(f"❌ Error getting option contract: {e}")
             
-            return {
-                "instrument_key": f"{symbol}_{option_type}_{strike_price}",
-                "strike_price": strike_price,
-                "expiry_date": "2024-01-25",  # Weekly expiry
-                "lot_size": 50
-            }
+            logger.error("❌ Could not resolve option contract - no option service available")
+            return None
             
         except Exception as e:
             logger.error(f"Error resolving option contract: {e}")
@@ -880,6 +1118,7 @@ class AutoTradingCoordinator:
             if self.broker_manager:
                 await self.broker_manager.shutdown()
             
+            # Shutdown data service
             if self.data_service:
                 await self.data_service.shutdown()
             
@@ -1068,7 +1307,8 @@ class AutoTradingCoordinator:
             
         except Exception as e:
             logger.error(f"Error calculating margin-aware position size: {e}")
-            return {"quantity": 1, "method": "error_fallback"}
+            logger.error("❌ Could not calculate position size - no valid data available")
+            return {"quantity": 0, "method": "error_no_data", "error": "No valid position sizing data"}
         finally:
             if db:
                 db.close()

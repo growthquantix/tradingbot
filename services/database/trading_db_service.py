@@ -683,16 +683,20 @@ class TradingDatabaseService:
             trade_id = await self.log_trade_execution(trade_execution_data)
             
             # Log to system for monitoring
-            await self.log_system_event(
-                event_type='FIBONACCI_SIGNAL_GENERATED',
-                event_data={
+            await self.log_system_event({
+                'level': 'INFO',
+                'component': 'fibonacci_signal',
+                'message': 'Fibonacci signal generated',
+                'user_id': user_id,
+                'symbol': signal_data.get('symbol'),
+                'latency_ms': signal_data.get('processing_time_ms'),
+                'additional_data': {
                     'instrument_key': signal_data.get('instrument_key'),
                     'signal_type': signal_data.get('signal_type'),
                     'confidence': signal_data.get('confidence_score'),
                     'processing_time_ms': signal_data.get('processing_time_ms')
-                },
-                user_id=user_id
-            )
+                }
+            })
             
             return trade_id
             
@@ -784,9 +788,12 @@ class TradingDatabaseService:
             True if logged successfully, False otherwise
         """
         try:
-            await self.log_system_event(
-                event_type='TICK_PROCESSING_METRICS',
-                event_data={
+            await self.log_system_event({
+                'level': 'INFO',
+                'component': 'tick_processing',
+                'message': 'Tick processing metrics recorded',
+                'latency_ms': metrics_data.get('avg_processing_time_ms', 0),
+                'additional_data': {
                     'total_ticks_processed': metrics_data.get('total_ticks_processed', 0),
                     'avg_processing_time_ms': metrics_data.get('avg_processing_time_ms', 0),
                     'max_processing_time_ms': metrics_data.get('max_processing_time_ms', 0),
@@ -797,9 +804,8 @@ class TradingDatabaseService:
                     'circuit_breaker_triggers': metrics_data.get('circuit_breaker_triggers', 0),
                     'active_instruments': metrics_data.get('active_instruments', 0),
                     'queue_size': metrics_data.get('queue_size', 0)
-                },
-                severity='INFO'
-            )
+                }
+            })
             return True
             
         except Exception as e:

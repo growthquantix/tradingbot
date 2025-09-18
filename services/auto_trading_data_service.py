@@ -163,12 +163,37 @@ class AutoTradingDataService:
         
         logger.info("✅ AutoTradingDataService initialized")
     
+    async def initialize(self) -> bool:
+        """Initialize the auto-trading data service - called by AutoTradingCoordinator"""
+        try:
+            logger.info("🔄 Initializing AutoTradingDataService...")
+            
+            # Initialize database service (if it has initialize method)
+            if hasattr(self.db_service, 'initialize'):
+                await self.db_service.initialize()
+            else:
+                logger.info("✅ Database service ready (no initialization method needed)")
+            
+            # Connect to live feed adapter for real-time data
+            self.live_feed_adapter = live_feed_adapter
+            
+            logger.info("✅ AutoTradingDataService initialized successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize auto-trading data service: {e}")
+            return False
+    
     async def start_service(self) -> bool:
         """Start the auto-trading data service"""
         try:
             if self.is_running:
                 logger.warning("⚠️ Service already running")
                 return True
+            
+            # Ensure initialization first
+            if not hasattr(self, 'live_feed_adapter') or not self.live_feed_adapter:
+                await self.initialize()
             
             # Register with live feed adapter
             live_feed_adapter.register_fibonacci_strategy_callback(
@@ -758,6 +783,227 @@ class AutoTradingDataService:
                    f"Signals: {metrics.signals_generated}, "
                    f"DB Writes: {metrics.database_writes}, "
                    f"Errors: {metrics.errors_count}")
+    
+    async def get_current_price(self, instrument_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current price for an instrument - CRITICAL METHOD called by AutoTradingCoordinator
+        
+        Args:
+            instrument_key: Instrument identifier
+            
+        Returns:
+            Dict with current price data or None if not available
+        """
+        try:
+            # Method 1: Try live feed adapter first (fastest)
+            if hasattr(self, 'live_feed_adapter') and self.live_feed_adapter:
+                price_data = self.live_feed_adapter.get_latest_price(instrument_key)
+                if price_data:
+                    logger.debug(f"✅ Got current price from live adapter: {instrument_key} @ {price_data.get('ltp', 0)}")
+                    return price_data
+            
+            # Method 2: Try circular buffer (internal storage)
+            if instrument_key in self.tick_buffers:
+                buffer = self.tick_buffers[instrument_key]
+                recent_data = buffer.get_recent_data(1)  # Get latest tick
+                
+                if len(recent_data) > 0:
+                    latest_tick = recent_data[-1]
+                    current_price = latest_tick[4]  # Close price (LTP)
+                    
+                    logger.debug(f"✅ Got current price from buffer: {instrument_key} @ {current_price}")
+                    return {
+                        'ltp': current_price,
+                        'last_price': current_price,
+                        'change': 0.0,  # We'll calculate if needed
+                        'change_percent': 0.0,
+                        'volume': int(latest_tick[5]),
+                        'timestamp': datetime.now(IST).isoformat()
+                    }
+            
+            # Method 3: Try centralized WebSocket manager
+            try:
+                from services.centralized_ws_manager import centralized_manager
+                if hasattr(centralized_manager, '_live_prices'):
+                    live_prices = centralized_manager._live_prices
+                    if instrument_key in live_prices:
+                        price_data = live_prices[instrument_key]
+                        logger.debug(f"✅ Got current price from centralized manager: {instrument_key} @ {price_data.get('ltp', 0)}")
+                        return price_data
+            except ImportError:
+                pass
+            
+            # Method 4: Try instrument registry as fallback
+            try:
+                from services.instrument_registry import instrument_registry
+                symbol = instrument_key.split('|')[-1] if '|' in instrument_key else instrument_key
+                price_data = instrument_registry.get_spot_price(symbol)
+                if price_data:
+                    logger.debug(f"✅ Got current price from instrument registry: {instrument_key} @ {price_data.get('last_price', 0)}")
+                    return {
+                        'ltp': price_data.get('last_price', 0.0),
+                        'last_price': price_data.get('last_price', 0.0),
+                        'change': price_data.get('change', 0.0),
+                        'change_percent': price_data.get('change_percent', 0.0),
+                        'volume': price_data.get('volume', 0),
+                        'timestamp': datetime.now(IST).isoformat()
+                    }
+            except ImportError:
+                pass
+            
+            logger.warning(f"⚠️ No current price available for {instrument_key}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting current price for {instrument_key}: {e}")
+            return None
+    
+    async def get_ohlc_data(self, instrument_key: str, timeframe: str = '1m', periods: int = 100) -> pd.DataFrame:
+        """
+        Get OHLC data for an instrument - CRITICAL METHOD called by AutoTradingCoordinator
+        
+        Args:
+            instrument_key: Instrument identifier
+            timeframe: Time frame ('1m', '5m', '15m', '1h', etc.)
+            periods: Number of periods to return
+            
+        Returns:
+            DataFrame with OHLC data
+        """
+        try:
+            # Method 1: Try live feed adapter first (preferred)
+            if hasattr(self, 'live_feed_adapter') and self.live_feed_adapter:
+                if timeframe == '1m':
+                    df = self.live_feed_adapter.get_1m_df(instrument_key, periods)
+                    if not df.empty:
+                        logger.debug(f"✅ Got {timeframe} OHLC from live adapter: {instrument_key} ({len(df)} bars)")
+                        return df
+                elif timeframe == '5m':
+                    df = self.live_feed_adapter.get_5m_df(instrument_key, periods * 5)  # 5m needs more minutes
+                    if not df.empty:
+                        logger.debug(f"✅ Got {timeframe} OHLC from live adapter: {instrument_key} ({len(df)} bars)")
+                        return df
+            
+            # Method 2: Generate from circular buffer data
+            if instrument_key in self.tick_buffers:
+                buffer = self.tick_buffers[instrument_key]
+                recent_data = buffer.get_recent_data(periods * 2)  # Get more data for better OHLC
+                
+                if len(recent_data) >= 5:  # Minimum data required
+                    df = self._convert_buffer_to_ohlc(recent_data, timeframe, periods)
+                    if not df.empty:
+                        logger.debug(f"✅ Got {timeframe} OHLC from buffer: {instrument_key} ({len(df)} bars)")
+                        return df
+            
+            # Method 3: Try dashboard OHLC service fallback
+            try:
+                from services.dashboard_ohlc_service import dashboard_ohlc_service
+                df = await dashboard_ohlc_service.get_ohlc_data(instrument_key, timeframe, periods)
+                if not df.empty:
+                    logger.debug(f"✅ Got {timeframe} OHLC from dashboard service: {instrument_key} ({len(df)} bars)")
+                    return df
+            except ImportError:
+                pass
+            
+            logger.warning(f"⚠️ No OHLC data available for {instrument_key} ({timeframe}, {periods} periods)")
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting OHLC data for {instrument_key}: {e}")
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    
+    def _convert_buffer_to_ohlc(self, buffer_data: np.ndarray, timeframe: str, periods: int) -> pd.DataFrame:
+        """Convert circular buffer data to OHLC DataFrame"""
+        try:
+            if len(buffer_data) == 0:
+                return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(buffer_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s', utc=True).dt.tz_convert('Asia/Kolkata')
+            df.set_index('timestamp', inplace=True)
+            
+            # Resample based on timeframe
+            if timeframe == '1m':
+                freq = '1T'
+            elif timeframe == '5m':
+                freq = '5T'
+            elif timeframe == '15m':
+                freq = '15T'
+            elif timeframe == '1h':
+                freq = '1H'
+            else:
+                freq = '1T'  # Default to 1 minute
+            
+            # Resample to OHLCV
+            ohlcv = df.resample(freq).agg({
+                'open': 'first',
+                'high': 'max',
+                'low': 'min', 
+                'close': 'last',
+                'volume': 'sum'
+            }).dropna()
+            
+            ohlcv.reset_index(inplace=True)
+            
+            # Limit to requested periods
+            if len(ohlcv) > periods:
+                ohlcv = ohlcv.tail(periods)
+            
+            return ohlcv
+            
+        except Exception as e:
+            logger.error(f"❌ Error converting buffer to OHLC: {e}")
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    
+    async def process_market_data_batch(self):
+        """Process batch of market data - called by AutoTradingCoordinator"""
+        try:
+            # Process any queued items
+            processed_count = 0
+            max_batch_size = 10  # Limit batch size for performance
+            
+            while self.processing_queue and processed_count < max_batch_size:
+                with self.processing_lock:
+                    if not self.processing_queue:
+                        break
+                    item = self.processing_queue.popleft()
+                
+                # Process in current thread for immediate processing
+                self._process_tick_data(item)
+                processed_count += 1
+            
+            if processed_count > 0:
+                logger.debug(f"✅ Processed {processed_count} market data items in batch")
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing market data batch: {e}")
+    
+    async def register_fibonacci_callback(self, strategy_name: str, callback: Callable):
+        """Register callback for Fibonacci signals - called by AutoTradingCoordinator"""
+        try:
+            self.signal_callbacks.append(callback)
+            logger.info(f"✅ Registered Fibonacci callback for strategy: {strategy_name}")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Error registering Fibonacci callback: {e}")
+            return False
+    
+    async def shutdown(self):
+        """Shutdown the auto-trading data service"""
+        try:
+            await self.stop_service()
+            
+            # Cleanup resources
+            self.tick_buffers.clear()
+            self.fib_cache.clear()
+            self.ema_cache.clear()
+            self.signal_callbacks.clear()
+            
+            logger.info("✅ AutoTradingDataService shutdown complete")
+            
+        except Exception as e:
+            logger.error(f"❌ Error during shutdown: {e}")
     
     def get_performance_stats(self) -> Dict[str, Any]:
         """Get current performance statistics"""

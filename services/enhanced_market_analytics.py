@@ -2,14 +2,20 @@ from datetime import datetime
 import logging
 from typing import Any, Dict, List
 
-# Import the NEW modular breakout detection service
-try:
-    from services.breakout import get_breakout_system, get_breakout_system_statistics
-    BREAKOUT_SERVICE_AVAILABLE = True
-except ImportError:
-    BREAKOUT_SERVICE_AVAILABLE = False
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 logger = logging.getLogger(__name__)
+
+# Import the ENHANCED breakout detection engine (NEW - Primary)
+try:
+    from services.enhanced_breakout_engine import enhanced_breakout_engine
+
+    ENHANCED_BREAKOUT_SERVICE_AVAILABLE = True
+except ImportError:
+    ENHANCED_BREAKOUT_SERVICE_AVAILABLE = False
 
 
 class EnhancedMarketAnalyticsService:
@@ -19,7 +25,7 @@ class EnhancedMarketAnalyticsService:
         self.cache_ttl = 2  # TRADING SAFETY: Reduced to 2 seconds for better accuracy
         self.max_cache_size = 1000  # Maximum cached items
         self.cache_access_times = {}  # Track access times for LRU cleanup
-        
+
         # 🚀 NEW: Single enriched data cache to avoid multiple fetches
         self._enriched_data_cache = None
         self._enriched_data_cache_time = 0
@@ -29,64 +35,71 @@ class EnhancedMarketAnalyticsService:
         """Clean up old cache entries using LRU strategy"""
         if len(self.cache) <= self.max_cache_size:
             return
-        
+
         # Remove oldest 20% of entries
         now = datetime.now()
         entries_to_remove = []
-        
+
         # Find expired entries first
         for key, timestamp in self.last_calculated.items():
             if (now - timestamp).total_seconds() > self.cache_ttl:
                 entries_to_remove.append(key)
-        
+
         # If still over limit, use LRU
         if len(self.cache) - len(entries_to_remove) > self.max_cache_size:
             # Sort by access time and remove oldest
             sorted_by_access = sorted(
-                self.cache_access_times.items(), 
-                key=lambda x: x[1]
+                self.cache_access_times.items(), key=lambda x: x[1]
             )
-            remaining_to_remove = len(self.cache) - len(entries_to_remove) - self.max_cache_size + 200
-            entries_to_remove.extend([key for key, _ in sorted_by_access[:remaining_to_remove]])
-        
+            remaining_to_remove = (
+                len(self.cache) - len(entries_to_remove) - self.max_cache_size + 200
+            )
+            entries_to_remove.extend(
+                [key for key, _ in sorted_by_access[:remaining_to_remove]]
+            )
+
         # Remove selected entries
         for key in entries_to_remove:
             self.cache.pop(key, None)
             self.last_calculated.pop(key, None)
             self.cache_access_times.pop(key, None)
-        
+
         if entries_to_remove:
             logger.debug(f"Cleaned up {len(entries_to_remove)} cache entries")
 
-    def _get_cached_or_compute(self, cache_key: str, compute_func: callable, ttl: int = None) -> Any:
+    def _get_cached_or_compute(
+        self, cache_key: str, compute_func: callable, ttl: int = None
+    ) -> Any:
         """Get cached result or compute new one with automatic cleanup"""
         now = datetime.now()
         effective_ttl = ttl or self.cache_ttl
-        
+
         # Check if cached result exists and is valid
-        if (cache_key in self.cache and 
-            cache_key in self.last_calculated and
-            (now - self.last_calculated[cache_key]).total_seconds() < effective_ttl):
-            
+        if (
+            cache_key in self.cache
+            and cache_key in self.last_calculated
+            and (now - self.last_calculated[cache_key]).total_seconds() < effective_ttl
+        ):
+
             # Update access time for LRU
             self.cache_access_times[cache_key] = now
             return self.cache[cache_key]
-        
+
         # Compute new result
         try:
             result = compute_func()
-            
+
             # Store in cache with cleanup
             self.cache[cache_key] = result
             self.last_calculated[cache_key] = now
             self.cache_access_times[cache_key] = now
-            
+
             # Trigger cleanup if needed
             if len(self.cache) > self.max_cache_size:
                 self._cleanup_cache()
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"Error computing {cache_key}: {e}")
             return None
@@ -94,24 +107,29 @@ class EnhancedMarketAnalyticsService:
     def _get_cached_enriched_data(self) -> Dict[str, Any]:
         """🚀 OPTIMIZED: Get enriched data with caching to avoid multiple fetches"""
         import time
+
         current_time = time.time()
-        
+
         # Check if cached data is still valid
-        if (self._enriched_data_cache and 
-            current_time - self._enriched_data_cache_time < self._enriched_data_cache_ttl):
+        if (
+            self._enriched_data_cache
+            and current_time - self._enriched_data_cache_time
+            < self._enriched_data_cache_ttl
+        ):
             return self._enriched_data_cache
-        
+
         # Fetch fresh data
         try:
             from services.instrument_registry import instrument_registry
+
             enriched_data = instrument_registry.get_enriched_prices()
-            
+
             # Update cache
             self._enriched_data_cache = enriched_data or {}
             self._enriched_data_cache_time = current_time
-            
+
             return self._enriched_data_cache
-            
+
         except Exception as e:
             logger.error(f"❌ Error fetching enriched data: {e}")
             return self._enriched_data_cache or {}
@@ -154,7 +172,7 @@ class EnhancedMarketAnalyticsService:
         except Exception as e:
             logger.error(f"Error generating complete analytics: {e}")
             return {"error": str(e), "timestamp": datetime.now().isoformat()}
-            
+
     def get_priority_analytics(self) -> Dict[str, Any]:
         """Get high-priority analytics for real-time updates - bypasses cache"""
         try:
@@ -164,20 +182,29 @@ class EnhancedMarketAnalyticsService:
             analytics = {
                 "top_movers": self.get_top_gainers_losers(force_refresh=True),
                 "intraday_stocks": self.get_intraday_stocks(force_refresh=True),
-                "volume_analysis": self.get_volume_analysis(force_refresh=True),  # Added for real-time volume updates
+                "volume_analysis": self.get_volume_analysis(
+                    force_refresh=True
+                ),  # Added for real-time volume updates
                 "market_sentiment": self.get_market_sentiment(),
                 "indices_data": self.get_indices_data(),
                 "generated_at": datetime.now().isoformat(),
-                "processing_time_ms": (datetime.now() - start_time).total_seconds() * 1000,
+                "processing_time_ms": (datetime.now() - start_time).total_seconds()
+                * 1000,
                 "is_priority_update": True,
             }
-            
-            logger.info(f"📊 Priority analytics generated in {analytics['processing_time_ms']:.2f}ms")
+
+            logger.info(
+                f"📊 Priority analytics generated in {analytics['processing_time_ms']:.2f}ms"
+            )
             return analytics
-            
+
         except Exception as e:
             logger.error(f"Error generating priority analytics: {e}")
-            return {"error": str(e), "timestamp": datetime.now().isoformat(), "is_priority_update": True}
+            return {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "is_priority_update": True,
+            }
 
     def get_all_live_stocks(self) -> List[Dict[str, Any]]:
         """COMPLETE: Get enriched stock data"""
@@ -216,7 +243,9 @@ class EnhancedMarketAnalyticsService:
                         "volatility": data.get("volatility", "normal"),
                         "has_derivatives": data.get("has_derivatives", False),
                         # Computed fields
-                        "market_cap_category": self._categorize_by_price(data.get("ltp") or data.get("last_price", 0)),
+                        "market_cap_category": self._categorize_by_price(
+                            data.get("ltp") or data.get("last_price", 0)
+                        ),
                         "volume_category": self._categorize_volume(
                             data.get("volume", 0)
                         ),
@@ -241,18 +270,25 @@ class EnhancedMarketAnalyticsService:
             logger.info(
                 f"📊 Retrieved {len(stocks)} enriched stocks with complete metadata"
             )
-            
+
             # ✅ CRITICAL FIX: If no stocks retrieved, try to get data from fallback sources
             if len(stocks) == 0:
-                logger.warning("⚠️ No enriched stocks found - checking fallback data sources")
+                logger.warning(
+                    "⚠️ No enriched stocks found - checking fallback data sources"
+                )
                 # Try to get any available live prices data
                 try:
                     from services.instrument_registry import instrument_registry
+
                     live_data = instrument_registry._live_prices
                     if live_data:
-                        logger.info(f"📊 Found {len(live_data)} live prices as fallback")
+                        logger.info(
+                            f"📊 Found {len(live_data)} live prices as fallback"
+                        )
                         # Convert live data to basic stock format
-                        for key, data in list(live_data.items())[:50]:  # Limit to prevent overload
+                        for key, data in list(live_data.items())[
+                            :50
+                        ]:  # Limit to prevent overload
                             if isinstance(data, dict) and data.get("ltp"):
                                 symbol = key.split("|")[-1] if "|" in key else key
                                 fallback_stock = {
@@ -264,23 +300,27 @@ class EnhancedMarketAnalyticsService:
                                     "change_percent": data.get("change_percent", 0),
                                     "volume": data.get("volume", 0),
                                     "market_cap_category": "unknown",
-                                    "volume_category": "unknown", 
+                                    "volume_category": "unknown",
                                     "performance_category": "unknown",
                                     "has_derivatives": False,
-                                    "last_updated": datetime.now().isoformat()
+                                    "last_updated": datetime.now().isoformat(),
                                 }
                                 stocks.append(fallback_stock)
                         logger.info(f"📊 Created {len(stocks)} fallback stock entries")
                 except Exception as fallback_error:
-                    logger.warning(f"⚠️ Fallback data retrieval failed: {fallback_error}")
-            
+                    logger.warning(
+                        f"⚠️ Fallback data retrieval failed: {fallback_error}"
+                    )
+
             return stocks
 
         except Exception as e:
             logger.error(f"Error getting live stocks: {e}")
             return []
 
-    def get_top_gainers_losers(self, limit: int = 20, force_refresh: bool = False) -> Dict[str, Any]:
+    def get_top_gainers_losers(
+        self, limit: int = 20, force_refresh: bool = False
+    ) -> Dict[str, Any]:
         """COMPLETE: Top movers with enriched data - real-time capable"""
         if not force_refresh and not self._should_recalculate("top_movers"):
             return self.cache.get("top_movers", {"gainers": [], "losers": []})
@@ -1209,41 +1249,54 @@ class EnhancedMarketAnalyticsService:
             # Use premarket candle builder for gap analysis
             import asyncio
             from services.premarket_candle_builder import get_todays_gaps
-            
+
             # Get today's gaps from premarket candle builder
             try:
                 # Try to get existing event loop
                 loop = asyncio.get_running_loop()
                 # Create a task instead of run_until_complete to avoid blocking
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(asyncio.run, get_todays_gaps())
                     all_gaps = future.result(timeout=10)
             except RuntimeError:
                 # No event loop running, safe to use run_until_complete
                 all_gaps = asyncio.run(get_todays_gaps())
-            
+
             # Separate gap up and gap down
             gap_up = [g for g in all_gaps if g["gap_percentage"] > 0]
             gap_down = [g for g in all_gaps if g["gap_percentage"] < 0]
-            
+
             # Categorize by size
             gap_up_small = [g for g in gap_up if 0.5 <= g["gap_percentage"] < 2.5]
             gap_up_medium = [g for g in gap_up if 2.5 <= g["gap_percentage"] < 5.0]
             gap_up_large = [g for g in gap_up if g["gap_percentage"] >= 5.0]
-            
+
             gap_down_small = [g for g in gap_down if -2.5 < g["gap_percentage"] <= -0.5]
-            gap_down_medium = [g for g in gap_down if -5.0 < g["gap_percentage"] <= -2.5]  
+            gap_down_medium = [
+                g for g in gap_down if -5.0 < g["gap_percentage"] <= -2.5
+            ]
             gap_down_large = [g for g in gap_down if g["gap_percentage"] <= -5.0]
-            
+
             # Calculate averages
-            avg_gap_up = sum(g["gap_percentage"] for g in gap_up) / len(gap_up) if gap_up else 0
-            avg_gap_down = sum(g["gap_percentage"] for g in gap_down) / len(gap_down) if gap_down else 0
-            
+            avg_gap_up = (
+                sum(g["gap_percentage"] for g in gap_up) / len(gap_up) if gap_up else 0
+            )
+            avg_gap_down = (
+                sum(g["gap_percentage"] for g in gap_down) / len(gap_down)
+                if gap_down
+                else 0
+            )
+
             # Sort for top gaps
-            top_gap_up = sorted(gap_up, key=lambda x: x["gap_percentage"], reverse=True)[:10]
-            top_gap_down = sorted(gap_down, key=lambda x: abs(x["gap_percentage"]), reverse=True)[:10]
-            
+            top_gap_up = sorted(
+                gap_up, key=lambda x: x["gap_percentage"], reverse=True
+            )[:10]
+            top_gap_down = sorted(
+                gap_down, key=lambda x: abs(x["gap_percentage"]), reverse=True
+            )[:10]
+
             result = {
                 "gap_up": gap_up,
                 "gap_down": gap_down,
@@ -1266,15 +1319,17 @@ class EnhancedMarketAnalyticsService:
                 },
                 "timestamp": datetime.now().isoformat(),
                 "data_source": "premarket_candle_builder",
-                "capture_window": "9:00-9:08 AM IST"
+                "capture_window": "9:00-9:08 AM IST",
             }
-            
+
             self.cache["gap_analysis"] = result
             self._mark_calculated("gap_analysis")
-            
-            logger.info(f"📊 Premarket gap analysis: {result['summary']['total_gaps_today']} gaps from 9:00-9:08 AM")
+
+            logger.info(
+                f"📊 Premarket gap analysis: {result['summary']['total_gaps_today']} gaps from 9:00-9:08 AM"
+            )
             return result
-                
+
         except Exception as e:
             logger.error(f"Error getting premarket gap analysis: {e}")
             # Fallback to basic calculation
@@ -1284,13 +1339,13 @@ class EnhancedMarketAnalyticsService:
         """Calculate average gap percentage"""
         if not gaps:
             return 0.0
-        
+
         gap_percentages = [g.get("gap_percent", 0) for g in gaps]
         if positive:
             gap_percentages = [g for g in gap_percentages if g > 0]
         else:
             gap_percentages = [g for g in gap_percentages if g < 0]
-        
+
         return sum(gap_percentages) / len(gap_percentages) if gap_percentages else 0.0
 
     def _calculate_gap_analysis_fallback(self) -> Dict[str, Any]:
@@ -1338,7 +1393,12 @@ class EnhancedMarketAnalyticsService:
 
         except Exception as e:
             logger.error(f"Error in fallback gap analysis: {e}")
-            return {"gap_up": [], "gap_down": [], "error": str(e), "data_source": "error"}
+            return {
+                "gap_up": [],
+                "gap_down": [],
+                "error": str(e),
+                "data_source": "error",
+            }
 
     def get_breakout_analysis(self) -> Dict[str, Any]:
         """Get breakout analysis using the proper breakout detection service"""
@@ -1348,54 +1408,70 @@ class EnhancedMarketAnalyticsService:
             )
 
         try:
-            # Use the proper breakout detection service
-            if BREAKOUT_SERVICE_AVAILABLE:
-                breakout_service = get_breakout_system()
-                
-                # Get active breakouts from the service
-                if breakout_service and hasattr(breakout_service, 'get_active_breakouts'):
-                    all_breakouts = breakout_service.get_active_breakouts()
-                else:
-                    # Fallback to getting statistics if direct method not available
-                    statistics = get_breakout_system_statistics()
-                    all_breakouts = []
-                    # Extract breakouts from statistics
-                    breakouts_by_type = statistics.get("breakouts_by_type", {})
-                    for breakout_list in breakouts_by_type.values():
-                        all_breakouts.extend(breakout_list)
-                
-                # Separate breakouts and breakdowns
-                breakouts = [b for b in all_breakouts if b.get("breakout_type") == "breakout"]
-                breakdowns = [b for b in all_breakouts if b.get("breakout_type") == "breakdown"]
-                
-                # Sort by confidence score and strength
-                breakouts.sort(key=lambda x: (x.get("confidence_score", 0), x.get("breakout_strength", 0)), reverse=True)
-                breakdowns.sort(key=lambda x: (x.get("confidence_score", 0), x.get("breakout_strength", 0)), reverse=True)
-                
-                # Get performance metrics from the service
-                metrics = breakout_service.get_performance_metrics()
-                
+            # 🚀 PRIMARY: Use Enhanced Breakout Engine (NEW)
+            if (
+                ENHANCED_BREAKOUT_SERVICE_AVAILABLE
+                and enhanced_breakout_engine.is_running
+            ):
+                logger.info("🔥 Using Enhanced Breakout Engine for real-time analysis")
+
+                # Get comprehensive breakout data from enhanced engine
+                enhanced_data = enhanced_breakout_engine.get_breakouts_summary()
+
+                # Extract breakouts and breakdowns
+                breakouts = enhanced_data.get("breakouts", [])
+                breakdowns = enhanced_data.get("breakdowns", [])
+                summary = enhanced_data.get("summary", {})
+                engine_metrics = enhanced_data.get("engine_metrics", {})
+
                 result = {
-                    "breakouts": breakouts[:20],  # Top 20 breakouts
-                    "breakdowns": breakdowns[:20],  # Top 20 breakdowns
+                    "breakouts": breakouts[:25],  # Top 25 breakouts
+                    "breakdowns": breakdowns[:25],  # Top 25 breakdowns
                     "summary": {
-                        "total_breakouts": len(breakouts),
-                        "total_breakdowns": len(breakdowns),
-                        "breakouts_detected_today": metrics.get("breakouts_detected_today", 0),
-                        "symbols_monitored": metrics.get("symbols_monitored", 0),
-                        "detection_active": metrics.get("detection_active", False),
-                        "is_trading_hours": metrics.get("is_trading_hours", False),
-                        "avg_processing_time_us": metrics.get("avg_processing_time_us", 0),
+                        "total_breakouts": summary.get(
+                            "total_breakouts", len(breakouts)
+                        ),
+                        "total_breakdowns": summary.get(
+                            "total_breakdowns", len(breakdowns)
+                        ),
+                        "total_today": summary.get(
+                            "total_today", len(breakouts) + len(breakdowns)
+                        ),
+                        "detection_active": summary.get(
+                            "detection_active", enhanced_breakout_engine.is_running
+                        ),
+                        "is_trading_hours": summary.get(
+                            "is_trading_hours", enhanced_breakout_engine.is_market_open
+                        ),
+                        "last_update": summary.get(
+                            "last_update", datetime.now().isoformat()
+                        ),
+                        # Enhanced metrics from the engine
+                        "engine_status": "enhanced_active",
+                        "instruments_tracked": engine_metrics.get(
+                            "instruments_tracked", 0
+                        ),
+                        "avg_processing_time_ms": engine_metrics.get(
+                            "avg_processing_time_ms", 0
+                        ),
+                        "memory_usage_mb": engine_metrics.get("memory_usage_mb", 0),
+                        "detection_accuracy": engine_metrics.get(
+                            "detection_accuracy", 0
+                        ),
                     },
                     "timestamp": datetime.now().isoformat(),
+                    "data_source": "enhanced_breakout_engine",
+                    # Additional enhanced data
+                    "top_breakouts": enhanced_data.get("top_breakouts", [])[:10],
+                    "recent_breakouts": enhanced_data.get("recent_breakouts", [])[:10],
+                    "breakouts_by_type": enhanced_data.get("breakouts_by_type", {}),
                 }
-                
-                self.cache["breakout_analysis"] = result
-                self._mark_calculated("breakout_analysis")
-                return result
+
             else:
                 # Fallback if breakout service is not available
-                logger.warning("Breakout detection service not available, returning empty result")
+                logger.warning(
+                    "Breakout detection service not available, returning empty result"
+                )
                 result = {
                     "breakouts": [],
                     "breakdowns": [],
@@ -1410,7 +1486,12 @@ class EnhancedMarketAnalyticsService:
 
         except Exception as e:
             logger.error(f"Error calculating breakout analysis: {e}")
-            return {"breakouts": [], "breakdowns": [], "error": str(e), "data_source": "error"}
+            return {
+                "breakouts": [],
+                "breakdowns": [],
+                "error": str(e),
+                "data_source": "error",
+            }
 
     def get_market_breadth(self) -> Dict[str, Any]:
         """Market breadth analysis"""
@@ -1449,19 +1530,21 @@ class EnhancedMarketAnalyticsService:
             cached = self.cache.get("intraday_stocks")
             if cached:
                 return cached
-                
+
         try:
             stocks = self.get_all_live_stocks()
-            
+
             # Get FNO-eligible stocks specifically
             fno_stocks = self._get_fno_eligible_stocks(stocks)
 
             # Filter for high momentum and high volume stocks
             high_momentum = [s for s in stocks if abs(s.get("change_percent", 0)) > 3]
             high_volume = [s for s in stocks if s.get("volume", 0) > 1000000]
-            
+
             # FNO-specific filters with lower thresholds
-            fno_momentum = [s for s in fno_stocks if abs(s.get("change_percent", 0)) > 1.5]
+            fno_momentum = [
+                s for s in fno_stocks if abs(s.get("change_percent", 0)) > 1.5
+            ]
             fno_volume = [s for s in fno_stocks if s.get("volume", 0) > 500000]
 
             # Combine all candidates with priority for FNO stocks
@@ -1487,11 +1570,13 @@ class EnhancedMarketAnalyticsService:
                     seen.add(symbol)
 
             # Sort by FNO status and performance
-            all_candidates.sort(key=lambda x: (
-                not x.get("is_fno", False),  # FNO stocks first
-                -abs(x.get("change_percent", 0)),  # Then by performance
-                -x.get("volume", 0)  # Then by volume
-            ))
+            all_candidates.sort(
+                key=lambda x: (
+                    not x.get("is_fno", False),  # FNO stocks first
+                    -abs(x.get("change_percent", 0)),  # Then by performance
+                    -x.get("volume", 0),  # Then by volume
+                )
+            )
 
             return {
                 "high_momentum": high_momentum[:15],
@@ -1499,14 +1584,18 @@ class EnhancedMarketAnalyticsService:
                 "fno_momentum": fno_momentum[:15],
                 "fno_volume": fno_volume[:15],
                 "all_candidates": all_candidates[:50],  # Increased limit for FNO
-                "fno_candidates": [s for s in all_candidates if s.get("is_fno", False)][:25],
+                "fno_candidates": [s for s in all_candidates if s.get("is_fno", False)][
+                    :25
+                ],
                 "summary": {
                     "total_high_momentum": len(high_momentum),
                     "total_high_volume": len(high_volume),
                     "total_fno_momentum": len(fno_momentum),
                     "total_fno_volume": len(fno_volume),
                     "total_candidates": len(all_candidates),
-                    "total_fno_candidates": len([s for s in all_candidates if s.get("is_fno", False)]),
+                    "total_fno_candidates": len(
+                        [s for s in all_candidates if s.get("is_fno", False)]
+                    ),
                 },
                 "timestamp": datetime.now().isoformat(),
             }
@@ -1514,27 +1603,48 @@ class EnhancedMarketAnalyticsService:
             logger.error(f"Error calculating intraday stocks: {e}")
             return {"all_candidates": [], "error": str(e)}
 
-    def _get_fno_eligible_stocks(self, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _get_fno_eligible_stocks(
+        self, stocks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Get FNO eligible stocks from the stock list"""
         try:
             # Try to get FNO stock list from service
             from services.fno_stock_service import get_fno_stocks_from_file
-            
+
             fno_data = get_fno_stocks_from_file()
             fno_symbols = set()
-            
+
             if fno_data:
-                fno_symbols = {stock.get("symbol", "").upper() for stock in fno_data if stock.get("symbol")}
-            
+                fno_symbols = {
+                    stock.get("symbol", "").upper()
+                    for stock in fno_data
+                    if stock.get("symbol")
+                }
+
             # Fallback: common FNO stocks if service not available
             if not fno_symbols:
                 fno_symbols = {
-                    "NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY",
-                    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", 
-                    "HDFC", "KOTAKBANK", "SBI", "BAJFINANCE", "BHARTIARTL",
-                    "ITC", "ASIANPAINT", "MARUTI", "LT", "ULTRACEMCO"
+                    "NIFTY",
+                    "BANKNIFTY",
+                    "FINNIFTY",
+                    "MIDCPNIFTY",
+                    "RELIANCE",
+                    "TCS",
+                    "INFY",
+                    "HDFCBANK",
+                    "ICICIBANK",
+                    "HDFC",
+                    "KOTAKBANK",
+                    "SBI",
+                    "BAJFINANCE",
+                    "BHARTIARTL",
+                    "ITC",
+                    "ASIANPAINT",
+                    "MARUTI",
+                    "LT",
+                    "ULTRACEMCO",
                 }
-            
+
             # Filter stocks that are FNO eligible
             fno_stocks = []
             for stock in stocks:
@@ -1543,10 +1653,12 @@ class EnhancedMarketAnalyticsService:
                     stock_copy = stock.copy()
                     stock_copy["has_fno"] = True
                     fno_stocks.append(stock_copy)
-            
-            logger.info(f"📊 Found {len(fno_stocks)} FNO eligible stocks out of {len(stocks)} total stocks")
+
+            logger.info(
+                f"📊 Found {len(fno_stocks)} FNO eligible stocks out of {len(stocks)} total stocks"
+            )
             return fno_stocks
-            
+
         except Exception as e:
             logger.error(f"Error getting FNO eligible stocks: {e}")
             # Return empty list to avoid breaking the main function
@@ -1575,6 +1687,15 @@ class EnhancedMarketAnalyticsService:
             logger.error(f"Error calculating performance summary: {e}")
             return {"error": str(e)}
 
+    def get_top_movers(self) -> Dict[str, Any]:
+        """Get top moving stocks - required by auto stock selection"""
+        try:
+            # Use existing _calculate_top_movers_manually method
+            return self._calculate_top_movers_manually(limit=20)
+        except Exception as e:
+            logger.error(f"Error getting top movers: {e}")
+            return {"gainers": [], "losers": [], "error": str(e)}
+
     def get_record_movers(self) -> Dict[str, Any]:
         """Stocks making new highs and lows"""
         try:
@@ -1584,7 +1705,9 @@ class EnhancedMarketAnalyticsService:
             new_lows = []
 
             for stock in stocks:
-                ltp = stock.get("last_price", 0) or stock.get("ltp", 0)  # Support both field names
+                ltp = stock.get("last_price", 0) or stock.get(
+                    "ltp", 0
+                )  # Support both field names
                 high = stock.get("high", 0)
                 low = stock.get("low", 0)
 
@@ -1883,7 +2006,11 @@ class EnhancedMarketAnalyticsService:
 
         last_calc = self.last_calculated[feature]
         # Real-time TTL for different features
-        ttl = 0.5 if feature in ['top_movers', 'intraday_stocks', 'market_sentiment'] else 1
+        ttl = (
+            0.5
+            if feature in ["top_movers", "intraday_stocks", "market_sentiment"]
+            else 1
+        )
         return (datetime.now() - last_calc).total_seconds() > ttl
 
     def _mark_calculated(self, feature: str):
@@ -1924,44 +2051,48 @@ def setup_analytics_events():
         def optimized_analytics_callback(analytics_payload):
             """🚀 NEW: Optimized analytics callback with selective processing"""
             try:
-                updated_instruments = analytics_payload.get('updated_instruments', [])
-                stats = analytics_payload.get('stats', {})
-                
+                updated_instruments = analytics_payload.get("updated_instruments", [])
+                stats = analytics_payload.get("stats", {})
+
                 # Only process significant updates (avoid unnecessary calculations)
-                enriched_count = stats.get('enriched', 0)
+                enriched_count = stats.get("enriched", 0)
                 if enriched_count < 5:  # Skip minor updates
                     return
-                
-                logger.debug(f"🔄 Analytics processing: {len(updated_instruments)} instruments, {enriched_count} enriched")
-                
+
+                logger.debug(
+                    f"🔄 Analytics processing: {len(updated_instruments)} instruments, {enriched_count} enriched"
+                )
+
                 # Selective cache clearing instead of full clear
                 cache_keys_to_remove = []
                 for instrument_key in updated_instruments:
                     # Remove cache entries related to updated instruments
                     for cache_key in list(enhanced_analytics.cache.keys()):
-                        if instrument_key in str(cache_key) or "top_movers" in str(cache_key):
+                        if instrument_key in str(cache_key) or "top_movers" in str(
+                            cache_key
+                        ):
                             cache_keys_to_remove.append(cache_key)
-                
+
                 # Clear selective cache entries
                 for key in cache_keys_to_remove:
                     enhanced_analytics.cache.pop(key, None)
                     enhanced_analytics.last_calculated.pop(key, None)
-                
+
                 # 🚀 NEW: Invalidate enriched data cache to force refresh
                 enhanced_analytics._invalidate_enriched_data_cache()
-                
+
                 # Background analytics refresh (non-blocking)
                 if enriched_count > 20:  # Only for significant updates
                     import asyncio
+
                     asyncio.create_task(background_analytics_refresh())
-                
+
             except Exception as e:
                 logger.error(f"❌ Error in optimized analytics callback: {e}")
 
         # 🚀 NEW: Register with optimized callback system (ZERO DELAY for strategies)
         success = instrument_registry.register_analytics_callback(
-            optimized_analytics_callback, 
-            "enhanced_market_analytics_optimized"
+            optimized_analytics_callback, "enhanced_market_analytics_optimized"
         )
 
         if success:
@@ -1972,6 +2103,7 @@ def setup_analytics_events():
     except Exception as e:
         logger.error(f"❌ Optimized analytics setup failed: {e}")
 
+
 async def background_analytics_refresh():
     """Background analytics refresh to avoid blocking real-time data"""
     try:
@@ -1981,6 +2113,7 @@ async def background_analytics_refresh():
         logger.debug("✅ Background analytics refresh completed")
     except Exception as e:
         logger.error(f"❌ Background analytics refresh failed: {e}")
+
 
 # Create service instance
 enhanced_analytics = EnhancedMarketAnalyticsService()

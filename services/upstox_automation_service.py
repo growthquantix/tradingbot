@@ -28,6 +28,9 @@ from services.upstox_service import (
     generate_upstox_auth_url,
 )
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +38,7 @@ logger = logging.getLogger(__name__)
 _automation_lock = asyncio.Lock()
 _last_refresh_attempt = None
 _refresh_in_progress = False
+
 
 class UpstoxAutomationService:
     """
@@ -49,10 +53,10 @@ class UpstoxAutomationService:
 
         # ✅ Add configurable headless mode
         self.headless_mode = os.getenv("UPSTOX_HEADLESS", "true").lower() == "true"
-        
+
         # Store captured authorization code
         self._captured_auth_code = None
-        
+
         # Instance lock for this service
         self._instance_lock = asyncio.Lock()
 
@@ -81,11 +85,11 @@ class UpstoxAutomationService:
 
             admin_broker = (
                 db.query(BrokerConfig)
-                .join(User)
+                .join(User, BrokerConfig.user_id == User.id)
                 .filter(
-                    User.role.ilike("admin"),
+                    User.role == "admin",
                     BrokerConfig.broker_name.ilike("upstox"),
-                    BrokerConfig.is_active == True,
+                    BrokerConfig.access_token.isnot(None),
                     BrokerConfig.api_key.isnot(None),
                     BrokerConfig.api_secret.isnot(None),
                 )
@@ -117,34 +121,40 @@ class UpstoxAutomationService:
         """
         try:
             import requests
-            
+
             if not access_token or len(access_token.strip()) < 10:
                 logger.warning("❌ Invalid token format - too short or empty")
                 return False
-            
+
             headers = {
                 "Authorization": f"Bearer {access_token.strip()}",
-                "Accept": "application/json"
+                "Accept": "application/json",
             }
             test_url = "https://api.upstox.com/v2/user/profile"
-            
+
             logger.debug(f"🔍 Testing token validity with API call to {test_url}")
             response = requests.get(test_url, headers=headers, timeout=15)
-            
+
             if response.status_code == 200:
                 try:
                     profile_data = response.json()
-                    if profile_data.get('status') == 'success':
-                        logger.info(f"✅ Token validation successful - User: {profile_data.get('data', {}).get('user_name', 'Unknown')}")
+                    if profile_data.get("status") == "success":
+                        logger.info(
+                            f"✅ Token validation successful - User: {profile_data.get('data', {}).get('user_name', 'Unknown')}"
+                        )
                         return True
                     else:
-                        logger.warning(f"❌ Token validation failed - API response: {profile_data}")
+                        logger.warning(
+                            f"❌ Token validation failed - API response: {profile_data}"
+                        )
                         return False
                 except json.JSONDecodeError:
                     logger.warning("❌ Token validation failed - Invalid JSON response")
                     return False
             elif response.status_code == 401:
-                logger.warning("❌ Token validation failed - Invalid/expired token (401)")
+                logger.warning(
+                    "❌ Token validation failed - Invalid/expired token (401)"
+                )
                 try:
                     error_data = response.json()
                     logger.warning(f"❌ Token error details: {error_data}")
@@ -155,10 +165,12 @@ class UpstoxAutomationService:
                 logger.warning("❌ Token validation failed - Access forbidden (403)")
                 return False
             else:
-                logger.warning(f"❌ Token validation failed - Unexpected status: {response.status_code}")
+                logger.warning(
+                    f"❌ Token validation failed - Unexpected status: {response.status_code}"
+                )
                 logger.warning(f"❌ Response: {response.text[:200]}")
                 return False
-                
+
         except requests.RequestException as e:
             logger.error(f"❌ Token validation network error: {e}")
             return False
@@ -184,25 +196,25 @@ class UpstoxAutomationService:
                 browser = await p.chromium.launch(
                     headless=True,  # Always headless in production
                     args=[
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-web-security',
-                        '--disable-features=VizDisplayCompositor',
-                        '--no-first-run',
-                        '--disable-default-apps',
-                        '--disable-extensions',
-                        '--disable-sync',
-                        '--disable-translate',
-                        '--hide-scrollbars',
-                        '--mute-audio',
-                        '--no-zygote',
-                        '--disable-accelerated-2d-canvas',
-                        '--disable-background-timer-throttling',
-                        '--disable-renderer-backgrounding',
-                        '--disable-backgrounding-occluded-windows'
-                    ]
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-web-security",
+                        "--disable-features=VizDisplayCompositor",
+                        "--no-first-run",
+                        "--disable-default-apps",
+                        "--disable-extensions",
+                        "--disable-sync",
+                        "--disable-translate",
+                        "--hide-scrollbars",
+                        "--mute-audio",
+                        "--no-zygote",
+                        "--disable-accelerated-2d-canvas",
+                        "--disable-background-timer-throttling",
+                        "--disable-renderer-backgrounding",
+                        "--disable-backgrounding-occluded-windows",
+                    ],
                 )
                 context = await browser.new_context()
                 page = await context.new_page()
@@ -245,61 +257,78 @@ class UpstoxAutomationService:
 
                     # Wait for redirect to happen and capture the authorization code
                     logger.info("Waiting for redirect with authorization code...")
-                    
+
                     try:
                         # ✅ CRITICAL FIX: Robust auth code capture with better timing
                         max_attempts = 60  # Longer wait for auth code
                         attempt = 0
                         auth_code_found = False
                         last_url = ""
-                        
+
                         logger.info("⏳ Waiting for authorization redirect...")
-                        
+
                         while attempt < max_attempts and not auth_code_found:
                             await page.wait_for_timeout(500)  # Check every 500ms
                             current_url = page.url
-                            
+
                             # Only process if URL changed to avoid repeated processing
                             if current_url != last_url and "code=" in current_url:
-                                logger.info(f"✅ Auth redirect detected: {current_url[:100]}...")
-                                
+                                logger.info(
+                                    f"✅ Auth redirect detected: {current_url[:100]}..."
+                                )
+
                                 # ✅ CRITICAL: Wait for URL to stabilize before extraction
                                 await page.wait_for_timeout(1000)
-                                
+
                                 # Verify URL is still the same (not still redirecting)
                                 final_url = page.url
                                 if final_url == current_url and "code=" in final_url:
                                     # Extract authorization code from URL
                                     from urllib.parse import urlparse, parse_qs
+
                                     parsed_url = urlparse(final_url)
                                     query_params = parse_qs(parsed_url.query)
-                                    
+
                                     if "code" in query_params and query_params["code"]:
                                         auth_code = query_params["code"][0]
-                                        logger.info(f"Authorization code captured: {auth_code[:10]}...")
-                                        
+                                        logger.info(
+                                            f"Authorization code captured: {auth_code[:10]}..."
+                                        )
+
                                         # ✅ CRITICAL: Validate auth code format and length
-                                        if len(auth_code) >= 8 and auth_code.isalnum():  # Better validation
+                                        if (
+                                            len(auth_code) >= 8 and auth_code.isalnum()
+                                        ):  # Better validation
                                             self._captured_auth_code = auth_code
                                             auth_code_found = True
-                                            logger.info("✅ Login automation completed with auth code captured")
+                                            logger.info(
+                                                "✅ Login automation completed with auth code captured"
+                                            )
                                             return True
                                         else:
-                                            logger.warning(f"Auth code format invalid: {len(auth_code)} chars, format check failed")
+                                            logger.warning(
+                                                f"Auth code format invalid: {len(auth_code)} chars, format check failed"
+                                            )
                                 else:
-                                    logger.info("URL still changing, waiting for stabilization...")
-                            
+                                    logger.info(
+                                        "URL still changing, waiting for stabilization..."
+                                    )
+
                             last_url = current_url
                             attempt += 1
-                        
+
                         if not auth_code_found:
-                            logger.warning("No valid authorization code found after 30 seconds, proceeding with callback method")
+                            logger.warning(
+                                "No valid authorization code found after 30 seconds, proceeding with callback method"
+                            )
                         return True
-                                
+
                     except Exception as redirect_error:
                         logger.warning(f"Redirect capture failed: {redirect_error}")
                         # Fallback: proceed anyway
-                        logger.info("✅ Login automation completed - fallback to callback")
+                        logger.info(
+                            "✅ Login automation completed - fallback to callback"
+                        )
                         return True
 
                 finally:
@@ -315,7 +344,9 @@ class UpstoxAutomationService:
             # Log more details for debugging
             logger.error(f"Exception type: {type(e).__name__}")
             if "browser" in str(e).lower() or "chromium" in str(e).lower():
-                logger.error("Browser-related error - check if Chromium is properly installed")
+                logger.error(
+                    "Browser-related error - check if Chromium is properly installed"
+                )
             return False
 
     async def wait_for_token_refresh(
@@ -373,13 +404,13 @@ class UpstoxAutomationService:
         2. Wait for callback to handle token exchange
         """
         global _refresh_in_progress, _last_refresh_attempt
-        
+
         # Use global lock to prevent multiple concurrent refresh attempts
         async with _automation_lock:
             # ✅ CRITICAL FIX: Always allow refresh if emergency_bypass=True or token is expired
             now = datetime.now()
             should_proceed = emergency_bypass
-            
+
             # Check if token is actually expired - always allow refresh for expired tokens
             try:
                 db = SessionLocal()
@@ -387,46 +418,62 @@ class UpstoxAutomationService:
                 if admin_broker and admin_broker.access_token_expiry:
                     if admin_broker.access_token_expiry < now:
                         should_proceed = True
-                        logger.info("🚨 Token expired - proceeding with emergency refresh")
+                        logger.info(
+                            "🚨 Token expired - proceeding with emergency refresh"
+                        )
                     # Test current token validity if near expiry
-                    elif (admin_broker.access_token_expiry - now).total_seconds() < 600:  # 10 minutes
+                    elif (
+                        admin_broker.access_token_expiry - now
+                    ).total_seconds() < 600:  # 10 minutes
                         try:
                             if not self._test_token_validity(admin_broker.access_token):
                                 should_proceed = True
-                                logger.info("🚨 Token failed API validation - proceeding with refresh")
+                                logger.info(
+                                    "🚨 Token failed API validation - proceeding with refresh"
+                                )
                         except Exception:
                             should_proceed = True
-                            logger.info("🚨 Token validation error - proceeding with refresh")
+                            logger.info(
+                                "🚨 Token validation error - proceeding with refresh"
+                            )
                 db.close()
             except Exception as e:
                 logger.warning(f"Could not check token status: {e}")
                 should_proceed = True  # Proceed if we can't verify
-            
+
             # Only check cooldown if not in emergency/expired mode
             if not should_proceed:
-                if (_last_refresh_attempt and (now - _last_refresh_attempt).seconds < 120):
-                    logger.warning("⏳ Token refresh attempted recently, skipping duplicate request")
+                if (
+                    _last_refresh_attempt
+                    and (now - _last_refresh_attempt).seconds < 120
+                ):
+                    logger.warning(
+                        "⏳ Token refresh attempted recently, skipping duplicate request"
+                    )
                     return {
                         "success": False,
                         "error": "Token refresh attempted recently. Please wait before retrying.",
-                        "retry_after_seconds": 120 - (now - _last_refresh_attempt).seconds
+                        "retry_after_seconds": 120
+                        - (now - _last_refresh_attempt).seconds,
                     }
-                
+
                 if _refresh_in_progress:
-                    logger.warning("⏳ Token refresh already in progress, skipping duplicate request")
+                    logger.warning(
+                        "⏳ Token refresh already in progress, skipping duplicate request"
+                    )
                     return {
                         "success": False,
                         "error": "Token refresh already in progress",
                     }
-            
+
             _refresh_in_progress = True
             _last_refresh_attempt = now
-            
+
             try:
                 return await self._perform_token_refresh()
             finally:
                 _refresh_in_progress = False
-    
+
     async def _perform_token_refresh(self) -> Dict:
         """
         Internal method to perform the actual token refresh
@@ -449,10 +496,10 @@ class UpstoxAutomationService:
 
             # Check if token needs refresh - Upstox tokens expire daily at 3:30 AM
             now = datetime.now()
-            
+
             # First, test if the token actually works with Upstox API
             token_is_valid = self._test_token_validity(admin_broker.access_token)
-            
+
             if not token_is_valid:
                 logger.warning(
                     f"Admin token failed API validation despite expiry time: {admin_broker.access_token_expiry}"
@@ -461,7 +508,7 @@ class UpstoxAutomationService:
             else:
                 # If token is valid and not expiring within 30 minutes, no refresh needed
                 refresh_threshold = now + timedelta(minutes=30)
-                
+
                 if (
                     admin_broker.access_token_expiry
                     and admin_broker.access_token_expiry > refresh_threshold
@@ -497,83 +544,117 @@ class UpstoxAutomationService:
                 return {"success": False, "error": error_msg}
 
             # Step 2: Handle token exchange directly if we captured auth code
-            if hasattr(self, '_captured_auth_code') and self._captured_auth_code:
-                logger.info("🔄 Processing captured authorization code with proper timing...")
+            if hasattr(self, "_captured_auth_code") and self._captured_auth_code:
+                logger.info(
+                    "🔄 Processing captured authorization code with proper timing..."
+                )
                 try:
-                    from services.upstox_service import exchange_code_for_token, calculate_upstox_expiry
+                    from services.upstox_service import (
+                        exchange_code_for_token,
+                        calculate_upstox_expiry,
+                    )
                     import asyncio
-                    
+
                     # ✅ CRITICAL FIX: Immediate token exchange but with proper error handling
-                    logger.info("🚀 Processing auth code immediately while it's fresh...")
+                    logger.info(
+                        "🚀 Processing auth code immediately while it's fresh..."
+                    )
                     # Don't wait - auth codes expire quickly!
-                    
+
                     # Clear the auth code to prevent reuse
                     auth_code = self._captured_auth_code
                     self._captured_auth_code = None
-                    
-                    logger.info(f"🚀 Exchanging auth code with proper timing: {auth_code[:10]}...")
-                    
+
+                    logger.info(
+                        f"🚀 Exchanging auth code with proper timing: {auth_code[:10]}..."
+                    )
+
                     # ✅ CRITICAL FIX: Single attempt for auth code exchange (codes expire quickly)
                     logger.info(f"🚀 Exchanging auth code: {auth_code[:10]}...")
-                    
+
                     try:
                         # Single attempt - auth codes expire within seconds
                         token_response = exchange_code_for_token(
-                            auth_code, 
-                            admin_broker.api_key, 
-                            admin_broker.api_secret
+                            auth_code, admin_broker.api_key, admin_broker.api_secret
                         )
                         logger.info("✅ Token exchange successful!")
-                        
+
                     except Exception as exchange_error:
                         error_msg = str(exchange_error)
                         logger.error(f"❌ Token exchange failed: {error_msg}")
-                        
+
                         # Check if it's an auth code error - don't retry
-                        if "Invalid Auth code" in error_msg or "UDAPI100057" in error_msg:
-                            logger.error("❌ Auth code expired or invalid - will try callback method")
-                            raise Exception("Auth code expired - falling back to callback method")
+                        if (
+                            "Invalid Auth code" in error_msg
+                            or "UDAPI100057" in error_msg
+                        ):
+                            logger.error(
+                                "❌ Auth code expired or invalid - will try callback method"
+                            )
+                            raise Exception(
+                                "Auth code expired - falling back to callback method"
+                            )
                         else:
                             # Other errors might be retryable
                             raise exchange_error
-                    
+
                     # Update broker config with new token
                     admin_broker.access_token = token_response["access_token"]
                     admin_broker.access_token_expiry = calculate_upstox_expiry()
                     admin_broker.additional_params = token_response
                     admin_broker.last_error_message = None
                     db.commit()
-                    
+
                     # ✅ CRITICAL FIX: Minimal validation delay + don't fail on validation issues
                     logger.info("⏳ Allowing 3 seconds for Upstox token activation...")
                     await asyncio.sleep(3)
-                    
+
                     # Try to validate but don't fail the entire process if validation fails
                     try:
                         if self._test_token_validity(admin_broker.access_token):
-                            logger.info("✅ Token exchange completed and validated successfully")
-                            result = {"success": True, "message": "Token exchange and validation successful"}
+                            logger.info(
+                                "✅ Token exchange completed and validated successfully"
+                            )
+                            result = {
+                                "success": True,
+                                "message": "Token exchange and validation successful",
+                            }
                         else:
-                            logger.info("⚠️ Token validation failed but proceeding (token may need more time)")
-                            result = {"success": True, "message": "Token exchange completed (validation pending)"}
+                            logger.info(
+                                "⚠️ Token validation failed but proceeding (token may need more time)"
+                            )
+                            result = {
+                                "success": True,
+                                "message": "Token exchange completed (validation pending)",
+                            }
                     except Exception as validation_error:
-                        logger.info(f"⚠️ Token validation error: {validation_error} - proceeding anyway")
-                        result = {"success": True, "message": "Token exchange completed (validation skipped)"}
-                    
+                        logger.info(
+                            f"⚠️ Token validation error: {validation_error} - proceeding anyway"
+                        )
+                        result = {
+                            "success": True,
+                            "message": "Token exchange completed (validation skipped)",
+                        }
+
                 except Exception as exchange_error:
                     logger.error(f"❌ Direct token exchange failed: {exchange_error}")
                     # Clear the failed auth code
                     self._captured_auth_code = None
                     # Don't fallback to callback if direct exchange failed - the code is likely expired
-                    result = {"success": False, "error": f"Direct token exchange failed: {str(exchange_error)}"}
+                    result = {
+                        "success": False,
+                        "error": f"Direct token exchange failed: {str(exchange_error)}",
+                    }
             else:
                 # Step 2 (Fallback): Wait for callback to handle token exchange
                 logger.info(
                     "⏳ No auth code captured, waiting for callback endpoint..."
                 )
-                # ✅ FIX: Increased timeout for callback method reliability  
+                # ✅ FIX: Increased timeout for callback method reliability
                 result = await self.wait_for_token_refresh(
-                    admin_broker, db, timeout_seconds=45  # Longer timeout for callback reliability
+                    admin_broker,
+                    db,
+                    timeout_seconds=45,  # Longer timeout for callback reliability
                 )
 
             if result["success"]:
@@ -593,11 +674,11 @@ class UpstoxAutomationService:
                 "result": result,
                 "timestamp": datetime.now().isoformat(),
             }
-            
+
             # Notify centralized WebSocket manager about token update
             if result["success"]:
                 await self._notify_websocket_manager_about_token_refresh(admin_broker)
-            
+
             return result_dict
 
         except Exception as e:
@@ -605,7 +686,7 @@ class UpstoxAutomationService:
             return {"success": False, "error": str(e)}
         finally:
             db.close()
-    
+
     async def _notify_websocket_manager_about_token_refresh(self, broker: BrokerConfig):
         """
         Notify the centralized WebSocket manager about successful token refresh
@@ -614,32 +695,44 @@ class UpstoxAutomationService:
             # Try to notify the centralized WebSocket manager (avoid circular imports)
             import importlib
             import sys
-            
-            if 'services.centralized_ws_manager' in sys.modules:
-                ws_module = sys.modules['services.centralized_ws_manager']
-                if hasattr(ws_module, 'get_centralized_manager'):
+
+            if "services.centralized_ws_manager" in sys.modules:
+                ws_module = sys.modules["services.centralized_ws_manager"]
+                if hasattr(ws_module, "get_centralized_manager"):
                     manager = ws_module.get_centralized_manager()
-                    if manager and hasattr(manager, 'reload_admin_token'):
+                    if manager and hasattr(manager, "reload_admin_token"):
                         # Reload the token first
                         token_reloaded = await manager.reload_admin_token()
                         if token_reloaded:
-                            logger.info("✅ WebSocket manager token reloaded successfully")
-                            
+                            logger.info(
+                                "✅ WebSocket manager token reloaded successfully"
+                            )
+
                             # Try to trigger reconnection but don't force it aggressively
-                            if hasattr(manager, 'force_reconnect'):
+                            if hasattr(manager, "force_reconnect"):
                                 try:
                                     await manager.force_reconnect()
-                                    logger.info("✅ Triggered WebSocket force reconnection with new token")
+                                    logger.info(
+                                        "✅ Triggered WebSocket force reconnection with new token"
+                                    )
                                 except Exception as reconnect_error:
-                                    logger.warning(f"⚠️ Force reconnect failed: {reconnect_error}")
+                                    logger.warning(
+                                        f"⚠️ Force reconnect failed: {reconnect_error}"
+                                    )
                             else:
-                                logger.info("ℹ️ WebSocket manager will reconnect automatically on next attempt")
+                                logger.info(
+                                    "ℹ️ WebSocket manager will reconnect automatically on next attempt"
+                                )
                         else:
-                            logger.warning("❌ Failed to reload token in WebSocket manager")
+                            logger.warning(
+                                "❌ Failed to reload token in WebSocket manager"
+                            )
                         return
-            
-            logger.info("ℹ️ Centralized WebSocket manager not loaded yet - will reload token on next connection attempt")
-                
+
+            logger.info(
+                "ℹ️ Centralized WebSocket manager not loaded yet - will reload token on next connection attempt"
+            )
+
         except Exception as e:
             logger.warning(f"⚠️ Could not notify centralized WebSocket manager: {e}")
 
@@ -694,7 +787,9 @@ class UpstoxTokenScheduler:
         schedule.every().day.at("03:45").do(self._run_refresh)  # 15 min after expiry
         schedule.every().day.at("04:00").do(self._run_refresh)  # Backup refresh
         schedule.every().day.at("06:00").do(self._run_refresh)  # Morning backup
-        schedule.every(1).hours.do(self._check_and_refresh_expired)  # More frequent checks
+        schedule.every(1).hours.do(
+            self._check_and_refresh_expired
+        )  # More frequent checks
 
         self.is_running = True
         self.scheduler_thread = threading.Thread(
@@ -729,7 +824,9 @@ class UpstoxTokenScheduler:
             # Check if refresh is already in progress (global flag)
             global _refresh_in_progress
             if _refresh_in_progress:
-                logger.warning("🔄 Token refresh already in progress, skipping scheduled refresh")
+                logger.warning(
+                    "🔄 Token refresh already in progress, skipping scheduled refresh"
+                )
                 return
 
             def run_async_refresh():
@@ -739,7 +836,7 @@ class UpstoxTokenScheduler:
                     result = loop.run_until_complete(
                         self.automation_service.refresh_admin_upstox_token()
                     )
-                    
+
                     if result["success"]:
                         logger.info(
                             f"✅ Scheduled admin refresh completed: {result.get('message', 'Token refreshed')}"

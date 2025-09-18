@@ -782,6 +782,57 @@ class TradeSignal(Base):
     signal_time = Column(DateTime(timezone=True), nullable=False, default=func.now())
 
 
+class BreakoutSignal(Base):
+    """Database model for storing breakout/breakdown signals for historical analysis"""
+    __tablename__ = "breakout_signals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    instrument_key = Column(String, nullable=False, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    breakout_type = Column(String, nullable=False, index=True)  # volume_breakout, momentum_breakout, resistance_breakout, etc.
+    
+    # Price data
+    current_price = Column(Numeric(precision=10, scale=2), nullable=False)
+    breakout_price = Column(Numeric(precision=10, scale=2), nullable=False)
+    trigger_price = Column(Numeric(precision=10, scale=2), nullable=False)
+    
+    # Signal strength and confidence
+    percentage_move = Column(Float, nullable=False)
+    strength = Column(Float, nullable=False)  # 1-10 scale
+    confidence = Column(Float, nullable=False)  # 0-100% confidence score
+    
+    # Volume data
+    volume = Column(BigInteger, nullable=False)
+    volume_ratio = Column(Float, nullable=True)
+    
+    # Technical indicators
+    volatility_score = Column(Float, nullable=True)
+    market_cap_category = Column(String, nullable=True)
+    sector = Column(String, nullable=True)
+    
+    # Metadata
+    confirmation_signals = Column(JSON, nullable=True)  # Array of confirmation signals
+    detected_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
+    trading_date = Column(Date, nullable=False, index=True)  # For daily cleanup and analysis
+    
+    # Market context
+    market_hours = Column(Boolean, default=True)
+    market_status = Column(String, nullable=True)
+    
+    # Performance tracking (to be updated later)
+    follow_through = Column(Boolean, nullable=True)  # Did breakout continue?
+    max_move_after = Column(Float, nullable=True)  # Maximum % move after breakout
+    duration_held = Column(Integer, nullable=True)  # Minutes the breakout was sustained
+    
+    # Indexes for efficient queries
+    __table_args__ = (
+        Index('idx_breakout_symbol_date', 'symbol', 'trading_date'),
+        Index('idx_breakout_type_date', 'breakout_type', 'trading_date'),
+        Index('idx_breakout_detected_at', 'detected_at'),
+        Index('idx_breakout_strength', 'strength'),
+    )
+
+
 class AITradeJournal(Base):
     __tablename__ = "ai_trade_journal"
 
@@ -1892,3 +1943,11 @@ class FNOSelectionHistory(Base):
             "selection_date", "symbol", "user_id", name="uq_daily_stock_selection"
         ),
     )
+
+
+# =======================
+# Model Aliases for Backward Compatibility
+# =======================
+
+# Position alias for auto-trading system compatibility
+Position = ActivePosition

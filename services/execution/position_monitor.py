@@ -310,6 +310,9 @@ class PositionMonitor:
         self.greeks_calculator = GreeksCalculator()
         self.portfolio_monitor = PortfolioHeatMonitor()
         
+        # Callbacks
+        self.exit_callbacks: List[Callable] = []
+        
         # Performance tracking
         self.portfolio_metrics = {
             'total_pnl': 0.0,
@@ -584,6 +587,80 @@ class PositionMonitor:
             except Exception as e:
                 logger.error(f"Error updating portfolio metrics: {e}")
                 await asyncio.sleep(30.0)
+    
+    async def _check_risk_limits(self):
+        """Check immediate risk limits and trigger actions if needed"""
+        try:
+            active_positions = [pos for pos in self.positions.values() if pos.status == PositionStatus.ACTIVE]
+            
+            if not active_positions:
+                return
+            
+            # Check individual position limits
+            for position in active_positions:
+                # Check stop loss
+                if (position.position_type == PositionType.LONG and 
+                    position.current_price <= position.stop_loss):
+                    await self._trigger_exit_signal(position.position_id, ExitReason.STOP_LOSS)
+                    
+                elif (position.position_type == PositionType.SHORT and 
+                      position.current_price >= position.stop_loss):
+                    await self._trigger_exit_signal(position.position_id, ExitReason.STOP_LOSS)
+                
+                # Check max loss per position
+                max_loss_per_position = self.risk_limits.get('max_loss_per_position', 10000)
+                if position.unrealized_pnl < -max_loss_per_position:
+                    await self._trigger_exit_signal(position.position_id, ExitReason.RISK_LIMIT)
+            
+            # Check portfolio level limits
+            total_pnl = sum(pos.unrealized_pnl for pos in active_positions)
+            max_daily_loss = self.risk_limits.get('max_daily_loss', 50000)
+            
+            if total_pnl < -max_daily_loss:
+                logger.error(f"❌ Daily loss limit breached: {total_pnl}")
+                await self._trigger_emergency_exit("DAILY_LOSS_LIMIT")
+                
+        except Exception as e:
+            logger.error(f"❌ Error checking risk limits: {e}")
+    
+    async def _trigger_exit_signal(self, position_id: str, reason: ExitReason):
+        """Trigger exit signal for a specific position"""
+        try:
+            if position_id not in self.positions:
+                return
+                
+            position = self.positions[position_id]
+            logger.warning(f"⚠️ Exit signal triggered for {position.symbol}: {reason.value}")
+            
+            # Update position status
+            position.status = PositionStatus.SUSPENDED
+            position.exit_reason = reason
+            
+            # Trigger exit callbacks
+            for callback in self.exit_callbacks:
+                try:
+                    if asyncio.iscoroutinefunction(callback):
+                        await callback(position_id, reason)
+                    else:
+                        callback(position_id, reason)
+                except Exception as e:
+                    logger.error(f"❌ Error in exit callback: {e}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Error triggering exit signal: {e}")
+    
+    async def _trigger_emergency_exit(self, reason: str):
+        """Trigger emergency exit for all positions"""
+        try:
+            logger.error(f"🚨 EMERGENCY EXIT TRIGGERED: {reason}")
+            
+            active_positions = [pos for pos in self.positions.values() if pos.status == PositionStatus.ACTIVE]
+            
+            for position in active_positions:
+                await self._trigger_exit_signal(position.position_id, ExitReason.EMERGENCY_EXIT)
+                
+        except Exception as e:
+            logger.error(f"❌ Error in emergency exit: {e}")
     
     async def _monitor_risk_limits(self):
         """Monitor portfolio risk limits"""

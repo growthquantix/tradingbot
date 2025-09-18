@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # Secret Keys for JWT Tokens
 JWT_SECRET = os.getenv("JWT_SECRET", "your-access-secret-key")

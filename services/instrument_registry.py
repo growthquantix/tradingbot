@@ -68,6 +68,8 @@ class InstrumentRegistry:
         # State tracking
         self._initialized = False
         self._last_update = None
+        self._registry_initialized_today = False
+        self._registry_date = None
 
         logger.info("🏗️ Instrument Registry created with cache management")
         self._initialized = True
@@ -148,6 +150,14 @@ class InstrumentRegistry:
     async def initialize_registry(self):
         """Initialize the registry with data from instrument service"""
         async with self._lock:
+            # 🛡️ CHECK STATE: Prevent redundant daily initialization
+            from datetime import datetime, date
+            today = date.today()
+            
+            if self._registry_initialized_today and self._registry_date == today:
+                logger.info(f"✅ Instrument registry already initialized today ({today}) - skipping")
+                return
+            
             logger.info("🔄 Starting instrument registry initialization...")
 
             try:
@@ -306,6 +316,11 @@ class InstrumentRegistry:
                     logger.info(
                         f"✅ Instrument Registry initialized with {total_instruments} instruments"
                     )
+
+                # 🛡️ MARK STATE: Set initialization flag to prevent redundant calls
+                self._registry_initialized_today = True
+                self._registry_date = today
+                logger.info(f"🛡️ Registry initialization marked complete for {today}")
 
                 return True
 

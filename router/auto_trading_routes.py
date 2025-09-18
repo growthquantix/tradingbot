@@ -438,61 +438,92 @@ async def get_active_trades(
     try:
         coordinator = await get_coordinator()
         
+        if not coordinator:
+            logger.error("Coordinator not initialized")
+            return {
+                "active_trades": [],
+                "total_active": 0,
+                "daily_pnl": 0,
+                "error": "Coordinator not available"
+            }
+        
         # Get active positions from coordinator
         active_positions = []
         
         if coordinator.position_monitor:
-            positions = await coordinator.position_monitor.get_active_positions()
-            for position in positions:
-                position_data = {
-                    "id": position.get("position_id"),
-                    "symbol": position.get("symbol"),
-                    "option_type": position.get("option_type", "CE"),
-                    "entry_price": position.get("entry_price", 0),
-                    "current_price": position.get("current_price", 0),
-                    "quantity": position.get("quantity", 0),
-                    "lot_size": position.get("lot_size", 1),
-                    "pnl": position.get("pnl", 0),
-                    "pnl_percentage": position.get("pnl_percentage", 0),
-                    "stop_loss": position.get("stop_loss", 0),
-                    "target": position.get("target", 0),
-                    "entry_time": position.get("entry_time", datetime.now().isoformat()),
-                    "status": position.get("status", "ACTIVE")
-                }
-                active_positions.append(position_data)
+            try:
+                position_summary = coordinator.position_monitor.get_position_summary()
+                positions = position_summary.get('positions', [])
+                
+                for position in positions:
+                    if position.get("position_type"):  # Only include active positions
+                        position_data = {
+                            "id": position.get("position_id"),
+                            "symbol": position.get("symbol"),
+                            "option_type": "CE",  # Default, could be enhanced
+                            "entry_price": position.get("entry_price", 0),
+                            "current_price": position.get("current_price", 0),
+                            "quantity": position.get("quantity", 0),
+                            "lot_size": 1,  # Default, could be enhanced
+                            "pnl": position.get("unrealized_pnl", 0),
+                            "pnl_percentage": 0,  # Calculate if needed
+                            "stop_loss": 0,  # Could be enhanced with actual stop loss data
+                            "target": 0,     # Could be enhanced with actual target data
+                            "entry_time": datetime.now().isoformat(),  # Could be enhanced
+                            "status": "ACTIVE"
+                        }
+                        active_positions.append(position_data)
+            except Exception as position_error:
+                logger.error(f"Error getting positions from coordinator: {position_error}")
+                # Continue to check paper trading positions
         
         # Also check paper trading service if in paper mode
-        user_session = db.query(AutoTradingSession).filter(
-            AutoTradingSession.user_id == current_user.id,
-            AutoTradingSession.status == "ACTIVE"
-        ).first()
+        try:
+            user_session = db.query(AutoTradingSession).filter(
+                AutoTradingSession.user_id == current_user.id,
+                AutoTradingSession.status == "ACTIVE"
+            ).first()
+            
+            if user_session and ("PAPER" in user_session.session_type.upper() if user_session.session_type else True):
+                try:
+                    paper_account = await paper_trading_service.get_account(current_user.id)
+                    if paper_account:
+                        paper_positions = paper_trading_service.positions.get(current_user.id, [])
+                        for position in paper_positions:
+                            if hasattr(position, 'status') and position.status == "ACTIVE":
+                                active_positions.append({
+                                    "id": getattr(position, 'position_id', f"paper_{len(active_positions)}"),
+                                    "symbol": getattr(position, 'symbol', 'UNKNOWN'),
+                                    "option_type": getattr(position, 'option_type', 'CE'),
+                                    "entry_price": getattr(position, 'entry_price', 0),
+                                    "current_price": getattr(position, 'current_price', 0),
+                                    "quantity": getattr(position, 'quantity', 0),
+                                    "lot_size": getattr(position, 'lot_size', 1),
+                                    "pnl": getattr(position, 'pnl', 0),
+                                    "pnl_percentage": getattr(position, 'pnl_percentage', 0),
+                                    "stop_loss": getattr(position, 'stop_loss', 0),
+                                    "target": getattr(position, 'target', 0),
+                                    "entry_time": getattr(position, 'entry_time', datetime.now()).isoformat() if hasattr(position, 'entry_time') else datetime.now().isoformat(),
+                                    "status": getattr(position, 'status', 'ACTIVE')
+                                })
+                except Exception as paper_error:
+                    logger.error(f"Error getting paper trading positions: {paper_error}")
+        except Exception as session_error:
+            logger.error(f"Error getting user session: {session_error}")
         
-        if user_session and ("PAPER" in user_session.session_type.upper() if user_session.session_type else True):
-            paper_account = await paper_trading_service.get_account(current_user.id)
-            if paper_account:
-                paper_positions = paper_trading_service.positions.get(current_user.id, [])
-                for position in paper_positions:
-                    if position.status == "ACTIVE":
-                        active_positions.append({
-                            "id": position.position_id,
-                            "symbol": position.symbol,
-                            "option_type": position.option_type,
-                            "entry_price": position.entry_price,
-                            "current_price": position.current_price,
-                            "quantity": position.quantity,
-                            "lot_size": position.lot_size,
-                            "pnl": position.pnl,
-                            "pnl_percentage": position.pnl_percentage,
-                            "stop_loss": position.stop_loss,
-                            "target": position.target,
-                            "entry_time": position.entry_time.isoformat(),
-                            "status": position.status
-                        })
+        # Get daily PnL safely
+        daily_pnl = 0
+        try:
+            if coordinator and hasattr(coordinator, 'system_metrics'):
+                daily_pnl = coordinator.system_metrics.get('total_pnl_today', 0)
+        except Exception as pnl_error:
+            logger.error(f"Error getting daily PnL: {pnl_error}")
         
         return {
             "active_trades": active_positions,
             "total_active": len(active_positions),
-            "daily_pnl": coordinator.system_metrics.get('total_pnl_today', 0)
+            "daily_pnl": daily_pnl,
+            "success": True
         }
         
     except Exception as e:

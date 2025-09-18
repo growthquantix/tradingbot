@@ -16,11 +16,18 @@ from sqlalchemy.orm import Session
 # Load environment variables FIRST
 load_dotenv()
 
-# Configure logging EARLY
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+# Configure comprehensive logging system
+from core.fixed_logging_config import (
+    setup_fixed_logging,
+    get_fixed_logger,
+    set_trace_context,
 )
-logger = logging.getLogger(__name__)
+from core.audit_logger import audit_logger
+from core.performance_logger import performance_logger
+
+# Setup logging based on environment
+setup_fixed_logging(os.getenv("ENVIRONMENT", "development"))
+logger = get_fixed_logger("trading_app")
 
 # FIXED: Import enhanced analytics service properly
 try:
@@ -128,12 +135,15 @@ from router.paper_trading_routes import router as paper_trading_router
 from router.option_routes import option_router
 from services.unified_websocket_manager import unified_manager, start_unified_websocket
 from services.market_data_hub import market_data_hub, start_market_hub
+
 try:
     from router.auto_trading_routes import router as auto_trading_router
+
     AUTO_TRADING_AVAILABLE = True
     logger.info("✅ Auto Trading routes imported successfully")
 except ImportError as e:
     from fastapi import APIRouter
+
     auto_trading_router = APIRouter()  # Dummy router
     AUTO_TRADING_AVAILABLE = False
     logger.warning(f"⚠️ Auto Trading services not available: {e}")
@@ -152,8 +162,7 @@ try:
 except ImportError:
     INSTRUMENT_REGISTRY_AVAILABLE = False
 
-# Import your existing trading engine and services
-from services.trading_services.trading_engine import TradingEngine
+# from services.trading_services.trading_engine import TradingEngine
 from router.dashboard_router import router as dashboard_router
 
 # FIXED: Import trading scheduler correctly
@@ -197,6 +206,7 @@ try:
         get_premarket_candle_service,
         start_premarket_monitoring,
     )
+
     PREMARKET_CANDLE_AVAILABLE = True
     logger.info("✅ Premarket candle builder service imported successfully")
 except ImportError as e:
@@ -206,7 +216,7 @@ except ImportError as e:
     # Dummy functions for fallback
     def get_premarket_candle_service():
         return None
-    
+
     async def start_premarket_monitoring():
         pass
 
@@ -438,11 +448,11 @@ instrument_service_instance = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Enhanced lifespan with NEW centralized WebSocket system integration"""
+    """Enhanced lifespan with HFT Kafka system and centralized WebSocket integration"""
     global trading_engine, trading_scheduler, market_scheduler, instrument_service_instance
 
     logger.info(
-        "🚀 Starting Enhanced Trading Application with NEW Centralized WebSocket System..."
+        "🚀 Starting Enhanced Trading Application with HFT Kafka and Centralized WebSocket System..."
     )
 
     try:
@@ -455,7 +465,34 @@ async def lifespan(app: FastAPI):
         redis_status = trading_redis.health_check()
         logger.info(f"🔧 Redis status: {redis_status['message']}")
 
-        # 3. Initialize instrument service FIRST
+        # 3. 🚀 Initialize Simple Kafka System FIRST
+        logger.info("🚀 Initializing Simple Kafka System...")
+        try:
+            from services.simple_kafka_system import get_kafka_system
+
+            kafka_system = get_kafka_system()
+
+            # Initialize Kafka system
+            init_success = await kafka_system.initialize()
+            if init_success:
+                logger.info("✅ Simple Kafka system initialized successfully")
+
+                # Start Kafka system
+                start_success = await kafka_system.start_system()
+                if start_success:
+                    logger.info("🚀 Simple Kafka consumers started successfully")
+                else:
+                    logger.error("❌ Simple Kafka consumers failed to start")
+            else:
+                logger.warning(
+                    "⚠️ Simple Kafka system initialization failed - continuing without Kafka"
+                )
+        except Exception as e:
+            logger.warning(
+                f"⚠️ Simple Kafka system not available - continuing without Kafka: {e}"
+            )
+
+        # 4. Initialize instrument service
         logger.info("🔧 Initializing Instrument Service...")
         from services.instrument_refresh_service import get_trading_service
 
@@ -493,7 +530,30 @@ async def lifespan(app: FastAPI):
 
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
 
-        # 5. 🚀 NEW: Start Market Data Hub FIRST (ultra-fast processing)
+        # 5. 🚀 NEW: Start Real-Time Data Hub FIRST (zero-delay distribution)
+        logger.info("🚀 Starting Real-Time Data Distribution Hub...")
+        try:
+            from services.realtime_data_hub import get_realtime_data_hub
+            from services.premarket_candle_builder import premarket_candle_service
+
+            # Initialize the hub
+            hub = get_realtime_data_hub()
+            logger.info(
+                "✅ Real-Time Data Hub initialized for simultaneous data distribution"
+            )
+
+            # Note: Gap detection is now handled by HFT Kafka system
+            logger.info("📊 Gap detection handled by HFT Kafka system")
+
+            # Register premarket candle service (will register when in time window)
+            logger.info(
+                "📝 Premarket Candle Service will auto-register during 8:55-9:15 AM window"
+            )
+
+        except Exception as e:
+            logger.error(f"❌ Failed to start Real-Time Data Hub: {e}")
+
+        # 5a. 🚀 NEW: Start Market Data Hub (legacy support)
         logger.info("🚀 Starting Market Data Hub...")
         try:
             await start_market_hub()
@@ -509,6 +569,7 @@ async def lifespan(app: FastAPI):
         logger.info("🚀 Starting Enhanced Breakout Engine...")
         try:
             from services.enhanced_breakout_engine import start_enhanced_breakout_engine
+
             await start_enhanced_breakout_engine()
             logger.info("✅ Enhanced Breakout Engine started successfully")
         except Exception as e:
@@ -526,7 +587,9 @@ async def lifespan(app: FastAPI):
                     "✅ Premarket Candle Builder Service started for 9:00-9:08 AM gap detection"
                 )
             except Exception as e:
-                logger.error(f"❌ Failed to start Premarket Candle Builder Service: {e}")
+                logger.error(
+                    f"❌ Failed to start Premarket Candle Builder Service: {e}"
+                )
 
         # 8. NEW: Initialize Centralized WebSocket System
         if CENTRALIZED_WS_AVAILABLE:
@@ -579,16 +642,23 @@ async def lifespan(app: FastAPI):
                         f"📈 Total Instruments: {status.get('total_instruments', 0)}"
                     )
                     logger.info(f"👑 Admin Token Strategy: Active")
-                    
+
                     # 🚀 CRITICAL FIX: Connect centralized manager to unified WebSocket manager
-                    logger.info("🔗 Connecting centralized WebSocket manager to unified WebSocket manager...")
+                    logger.info(
+                        "🔗 Connecting centralized WebSocket manager to unified WebSocket manager..."
+                    )
                     try:
-                        from services.unified_websocket_manager import integrate_with_centralized_manager
+                        from services.unified_websocket_manager import (
+                            integrate_with_centralized_manager,
+                        )
+
                         integrate_with_centralized_manager()
-                        logger.info("✅ CRITICAL FIX: WebSocket managers successfully connected for real-time price flow")
+                        logger.info(
+                            "✅ CRITICAL FIX: WebSocket managers successfully connected for real-time price flow"
+                        )
                     except Exception as e:
                         logger.error(f"❌ Failed to connect WebSocket managers: {e}")
-                        
+
                 else:
                     logger.error(
                         "❌ NEW: Failed to initialize centralized WebSocket system"
@@ -659,7 +729,7 @@ async def lifespan(app: FastAPI):
         logger.info("📨 Starting Notification Scheduler...")
         try:
             from services.notification_scheduler import notification_scheduler
-            
+
             notification_scheduler.start_scheduler()
             logger.info(
                 "✅ Notification Scheduler started - handling token expiry, daily summaries, and system alerts"
@@ -672,23 +742,17 @@ async def lifespan(app: FastAPI):
                 "💡 This means automated token expiry alerts and daily summaries will not work"
             )
 
-        # 8. Initialize trading engine
-        try:
-            trading_engine = TradingEngine()
-            logger.info("🤖 Trading Engine initialized.")
-        except Exception as e:
-            logger.error(f"❌ Trading Engine initialization failed: {e}")
+        # # 8. Initialize trading engine
+        # try:
+        #     trading_engine = TradingEngine()
+        #     logger.info("🤖 Trading Engine initialized.")
+        # except Exception as e:
+        #     logger.error(f"❌ Trading Engine initialization failed: {e}")
 
         # 9. Start background tasks
-        if trading_engine:
-            engine_task = asyncio.create_task(start_enhanced_trading_engine())
-            logger.info("⚡ Enhanced Trading Engine background task started.")
-
-        # Note: Old gap and breakout detection services removed
-        # Now using enhanced services started earlier in the startup process
-        logger.info(
-            "🎯 Using enhanced gap and breakout detection services (numpy/pandas optimized)"
-        )
+        # if trading_engine:
+        #     engine_task = asyncio.create_task(start_enhanced_trading_engine())
+        #     logger.info("⚡ Enhanced Trading Engine background task started.")
 
         # 13. ✅ NEW: Start Auto Trading WebSocket Service
         if AUTO_TRADING_AVAILABLE:
@@ -733,6 +797,13 @@ async def lifespan(app: FastAPI):
                     f"❌ Auto Trade Execution Service failed to initialize: {e}"
                 )
 
+        # 16. 🚀 NEW: Kafka Strategy Executor (per-user service, initialized on demand)
+        logger.info("📊 Kafka Strategy Executor available for user sessions")
+        # Note: Kafka Strategy Executor is initialized per user when auto-trading is enabled
+        # This is not a global system service but a user-specific trading engine
+
+        # SSE has been removed - using existing WebSocket infrastructure instead
+
         logger.info(
             "🟢 All services started successfully with NEW Centralized WebSocket + Optimized Architecture!"
         )
@@ -746,6 +817,25 @@ async def lifespan(app: FastAPI):
         # Enhanced cleanup
         logger.info("🛑 Starting enhanced shutdown...")
 
+        # 🚀 Cleanup HFT Kafka system FIRST
+        logger.info("🚀 Shutting down HFT Kafka system...")
+        try:
+            from services.hft import cleanup_hft_system
+
+            await cleanup_hft_system()
+            logger.info("✅ HFT Kafka system shutdown completed")
+        except ImportError:
+            logger.debug("HFT Kafka system not available")
+        except Exception as e:
+            logger.error(f"❌ HFT Kafka system shutdown error: {e}")
+
+        # 📊 Kafka Strategy Executor cleanup (user-specific instances handle their own cleanup)
+        logger.info(
+            "📊 Kafka Strategy Executor user sessions will handle cleanup independently"
+        )
+
+        # SSE removed - using WebSocket infrastructure
+
         # NEW: Stop centralized WebSocket system
         if CENTRALIZED_WS_AVAILABLE and centralized_manager:
             try:
@@ -753,14 +843,6 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ NEW: Centralized WebSocket system stopped")
             except Exception as e:
                 logger.error(f"Error stopping centralized WebSocket: {e}")
-
-        # Stop NEW Modular Breakout System
-        if MODULAR_BREAKOUT_AVAILABLE:
-            try:
-                await stop_breakout_system()
-                logger.info("✅ NEW Modular Breakout System stopped")
-            except Exception as e:
-                logger.error(f"Error stopping Modular Breakout System: {e}")
 
         # Premarket Candle Builder Service stops automatically when premarket window closes
 
@@ -791,11 +873,12 @@ async def lifespan(app: FastAPI):
         try:
             logger.info("🛑 Stopping Notification Scheduler...")
             from services.notification_scheduler import notification_scheduler
+
             notification_scheduler.stop_scheduler()
             logger.info("✅ Notification Scheduler stopped")
         except Exception as e:
             logger.error(f"Error stopping notification scheduler: {e}")
-            
+
         logger.info(
             "🎯 Enhanced gap and breakout detection services shutdown completed"
         )
@@ -889,6 +972,18 @@ app.add_middleware(TokenRefreshMiddleware)
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(broker_router, prefix="/api/broker", tags=["Broker API"])
 app.include_router(config_router, tags=["Configuration"])
+
+# 🚀 HFT Kafka System Router
+try:
+    from router.hft_router import router as hft_router
+
+    app.include_router(hft_router, tags=["🚀 HFT Kafka System"])
+    logger.info("✅ HFT Kafka router included")
+except ImportError:
+    logger.warning("⚠️ HFT router not available")
+
+# SSE router removed - using existing WebSocket infrastructure
+
 app.include_router(stock_list_router, prefix="/api/stocks", tags=["Stock Data"])
 app.include_router(upstox_router, prefix="/api/broker/upstox", tags=["Upstox API"])
 app.include_router(fyers_router, prefix="/api/broker/fyers", tags=["Fyers API"])
@@ -919,6 +1014,7 @@ app.include_router(auto_trading_router, tags=["Auto Trading & Stock Selection"])
 # NIFTY 09:40 Strategy Router
 try:
     from router.nifty_strategy_router import nifty_strategy_router
+
     app.include_router(nifty_strategy_router, tags=["NIFTY 09:40 Strategy"])
     logger.info("✅ NIFTY 09:40 Strategy routes registered")
 except ImportError as e:
@@ -938,17 +1034,6 @@ except ImportError as e:
 
     # Breakout router removed - using enhanced_breakout_engine instead
     logger.info("✅ Using enhanced_breakout_engine for breakout functionality")
-
-# Add Test Breakout Router for debugging
-try:
-    from router.test_breakout_router import router as test_breakout_router
-    app.include_router(test_breakout_router, tags=["Test Breakout Detection"])
-    logger.info("✅ Test Breakout Detection routes registered")
-except ImportError as e:
-    logger.warning(f"⚠️ Test Breakout Router not available: {e}")
-
-# Premarket candle builder API routes handled by existing routers
-
 
 # NEW: Add centralized WebSocket routes
 if CENTRALIZED_ROUTES_AVAILABLE:
@@ -1171,8 +1256,8 @@ async def refresh_instruments():
 
         instrument_service = get_trading_service()
 
-        # Re-initialize the service
-        result = await instrument_service.initialize_service()
+        # FORCE re-initialize the service (bypass daily cache)
+        result = await instrument_service.force_refresh()
 
         # Refresh centralized WebSocket manager
         if CENTRALIZED_WS_AVAILABLE and centralized_manager:
@@ -1231,6 +1316,7 @@ async def enhanced_health_check():
             "market_scheduler": "unknown",
             "instrument_service": "unknown",
             "redis": redis_status["status"],
+            "kafka": "unknown",
         },
         "new_centralized_websocket_details": centralized_health,
         "redis_details": redis_status,
@@ -1246,6 +1332,23 @@ async def enhanced_health_check():
     except Exception as e:
         health_status["services"]["instrument_registry"] = "error"
         health_status["instrument_registry_error"] = str(e)
+
+    # Check Kafka system health
+    try:
+        from services.simple_kafka_system import get_kafka_system
+
+        kafka_system = get_kafka_system()
+        kafka_health = await kafka_system.health_check()
+
+        if kafka_health.get("kafka_connected", False):
+            health_status["services"]["kafka"] = "connected"
+        else:
+            health_status["services"]["kafka"] = "disconnected"
+
+        health_status["kafka_details"] = kafka_health
+    except Exception as e:
+        health_status["services"]["kafka"] = "error"
+        health_status["kafka_error"] = str(e)
 
     # Check trading engine
     if trading_engine:

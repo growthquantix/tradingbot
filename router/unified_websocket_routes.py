@@ -94,7 +94,8 @@ async def unified_websocket_endpoint(websocket: WebSocket):
                 'market_sentiment_update', 
                 'indices_data_update',
                 'price_update',
-                'dashboard_update'
+                'dashboard_update',
+                'breakout_analysis_update'
             ],
             'trading': [
                 'price_update', 
