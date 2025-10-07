@@ -148,7 +148,7 @@ python-engineio==4.11.2
 python-jose==3.4.0
 python-multipart==0.0.20
 python-slugify==8.0.4
-python-socketio==5.12.1
+python-socketio==5.14.0
 pytz==2025.1
 PyYAML==6.0.2
 redis==5.2.1
