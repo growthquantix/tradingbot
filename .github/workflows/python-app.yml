@@ -421,7 +421,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Publish test results
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v2
         if: always()
         continue-on-error: true
         with:
