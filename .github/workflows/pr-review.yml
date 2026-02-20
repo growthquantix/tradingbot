@@ -78,7 +78,7 @@ jobs:
         fi
 
     - name: Automated Feedback
-      uses: actions/github-script@v6
+      uses: actions/github-script@v8
       if: github.event.action == 'opened'
       with:
         script: |

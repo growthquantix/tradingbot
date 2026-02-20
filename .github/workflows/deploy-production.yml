@@ -75,7 +75,7 @@ jobs:
         
     - name: Create deployment
       if: steps.checks.outputs.should_deploy == 'true'
-      uses: actions/github-script@v6
+      uses: actions/github-script@v8
       env:
         DEPLOY_ENV: ${{ github.event.inputs.environment || 'production' }}
       with:
@@ -408,7 +408,7 @@ jobs:
     
     steps:
     - name: Notify deployment status
-      uses: actions/github-script@v6
+      uses: actions/github-script@v8
       with:
         script: |
           const success = '${{ needs.post-deployment-tests.result }}' === 'success';
