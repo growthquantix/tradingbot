@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 15
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         fetch-depth: 2
         
@@ -99,7 +99,7 @@ jobs:
         ecosystem: [python, npm]
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       
     - name: Python dependency scan
       if: matrix.ecosystem == 'python'
@@ -170,7 +170,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -281,7 +281,7 @@ jobs:
     if: ${{ github.event_name == 'schedule' || github.event.inputs.scan_type == 'all' }}
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       
     - name: Check GitHub repository security settings
       uses: actions/github-script@v7
