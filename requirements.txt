@@ -121,7 +121,7 @@ playwright==1.54.0
 pluggy==1.6.0
 polars==1.32.2
 propcache==0.2.1
-protobuf==5.29.3
+protobuf==5.29.6
 psutil==7.0.0
 psycopg2-binary==2.9.10
 pyarrow==21.0.0
