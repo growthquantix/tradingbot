@@ -133,7 +133,7 @@ pydantic-settings==2.10.1
 pydantic_core==2.27.2
 pyee==13.0.0
 Pygments==2.19.1
-PyJWT==2.10.1
+PyJWT==2.12.0
 pymongo==4.11.1
 pyOpenSSL==25.0.0
 pyotp==2.9.0
