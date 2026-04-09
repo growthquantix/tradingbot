@@ -4,7 +4,9 @@ import threading
 from typing import Any, Dict, Optional
 from core.production_logging import get_trading_logger, get_audit_logger
 
-logger = get_trading_logger().setup_trading_logger()
+# Initialize logging (singleton handles multiple calls)
+get_trading_logger()
+
 # Use the named logger 'trading' which is setup in production_logging
 trading_logger = logging.getLogger('trading')
 audit_logger = get_audit_logger()

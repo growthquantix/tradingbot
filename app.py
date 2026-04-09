@@ -47,11 +47,14 @@ if platform.system() == "Windows":
 # Load environment variables FIRST
 load_dotenv()
 
-# Configure logging EARLY
-# logging.basicConfig(
-#     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-# )
+# Configure PRODUCTION logging EARLY
+# This silences noisy libraries (TF, Torch, etc.), enables structured JSON in prod
+# and applies ThrottledFilter to stop "Log Storms" from market ticks.
+from core.production_logging import get_trading_logger
+get_trading_logger()
+
 logger = logging.getLogger(__name__)
+
 
 # Custom Filter to suppress noisy Uvicorn access logs (Polling & OPTIONS)
 class EndpointFilter(logging.Filter):
@@ -61,7 +64,7 @@ class EndpointFilter(logging.Filter):
             if record.args and len(record.args) >= 3:
                 req_line = str(record.args[1])
                 status_code = record.args[2]
-                
+
                 # Filter out successful polling and OPTIONS requests
                 if status_code == 200:
                     if "GET /api/notifications" in req_line:
@@ -71,6 +74,8 @@ class EndpointFilter(logging.Filter):
             return True
         except Exception:
             return True
+
+
 try:
     from services.centralized_ws_manager import centralized_manager
     from router.market_ws import (
@@ -80,8 +85,8 @@ try:
 
     CENTRALIZED_WS_AVAILABLE = True
     CENTRALIZED_ROUTES_AVAILABLE = True
-    logger.info("✅ NEW: Centralized WebSocket manager imported successfully")
-    logger.info("✅ NEW: Centralized WebSocket routes imported successfully")
+    logger.debug("✅ NEW: Centralized WebSocket manager imported successfully")
+    logger.debug("✅ NEW: Centralized WebSocket routes imported successfully")
 except ImportError as e:
     CENTRALIZED_WS_AVAILABLE = False
     CENTRALIZED_ROUTES_AVAILABLE = False
@@ -96,7 +101,7 @@ except ImportError as e:
 if CENTRALIZED_WS_AVAILABLE:
     legacy_market_ws_router = centralized_market_ws_router
     LEGACY_MARKET_WS_AVAILABLE = True
-    logger.info(
+    logger.debug(
         "✅ Legacy market WebSocket routes available for backward compatibility"
     )
 else:
@@ -121,7 +126,7 @@ try:
     from router.market_analytics_router import router as market_analytics_router
 
     MARKET_ANALYTICS_ROUTER_AVAILABLE = True
-    logger.info("✅ Market analytics router imported successfully")
+    logger.debug("✅ Market analytics router imported successfully")
 except ImportError as e:
     logger.warning(f"⚠️ Market analytics router not available: {e}")
     from fastapi import APIRouter
@@ -154,10 +159,12 @@ from router.upstox_router import upstox_router
 
 try:
     from router.upstox_order_router import router as upstox_order_router
+
     UPSTOX_ORDER_ROUTER_AVAILABLE = True
-    logger.info("✅ Upstox Order Management router imported successfully")
+    logger.debug("✅ Upstox Order Management router imported successfully")
 except ImportError as e:
     from fastapi import APIRouter
+
     upstox_order_router = APIRouter()
     UPSTOX_ORDER_ROUTER_AVAILABLE = False
     logger.warning(f"⚠️ Upstox Order Management router not available: {e}")
@@ -181,6 +188,7 @@ from router.profile_router import router as profile_router
 from router.notification_router import router as notification_router
 
 from router.instrument_routes import router as instrument_router
+
 # from services.instrument_registry import instrument_registry
 from router.websocket_routes import router as websocket_router
 from router.debug_routes import router as debug_router
@@ -189,13 +197,20 @@ from router.heatmap_router import router as heatmap_router
 # from router.unified_websocket_routes import router as unified_ws_router
 from router.paper_trading_routes import router as paper_trading_router
 from router.option_routes import option_router
-from router.system_health_router import router as system_health_router
+try:
+    from router.system_health_router import router as system_health_router
+    SYSTEM_HEALTH_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as e:
+    from fastapi import APIRouter
+    system_health_router = APIRouter()
+    SYSTEM_HEALTH_AVAILABLE = False
+    logger.warning(f"⚠️ System Health router not available: {e}")
 
 try:
     from router.trading_execution_router import router as trading_execution_router
 
     TRADING_EXECUTION_AVAILABLE = True
-    logger.info("✅ Trading Execution routes imported successfully")
+    logger.debug("✅ Trading Execution routes imported successfully")
 except ImportError as e:
     from fastapi import APIRouter
 
@@ -218,7 +233,7 @@ try:
     )
 
     GAP_DETECTION_AVAILABLE = True
-    logger.info("✅ Gap detection service imported successfully")
+    logger.debug("✅ Gap detection service imported successfully")
 except ImportError as e:
     GAP_DETECTION_AVAILABLE = False
     logger.warning(f"⚠️ Gap detection service not available: {e}")
@@ -246,7 +261,7 @@ class TradingSafeRedisManager:
         redis_enabled = os.getenv("REDIS_ENABLED", "true").lower() == "true"
 
         if not redis_enabled:
-            logger.info("🔧 Redis disabled via REDIS_ENABLED environment variable")
+            logger.debug("🔧 Redis disabled via REDIS_ENABLED environment variable")
             return
 
         try:
@@ -264,7 +279,7 @@ class TradingSafeRedisManager:
             # Test connection
             self.redis_client.ping()
             self.is_connected = True
-            logger.info("✅ Redis connected successfully for trading system")
+            logger.debug("✅ Redis connected successfully for trading system")
 
         except ConnectionError:
             logger.warning(
@@ -461,41 +476,46 @@ async def lifespan(app: FastAPI):
     """Enhanced lifespan with NEW centralized WebSocket system integration"""
     global trading_engine, market_scheduler, instrument_service_instance
 
-    logger.info(
+    logger.debug(
         "🚀 Starting Enhanced Trading Application with NEW Centralized WebSocket System..."
     )
-    log_structured(event="APP_STARTUP_START", message="Starting Enhanced Trading Application")
+    log_structured(
+        event="APP_STARTUP_START", message="Starting Enhanced Trading Application"
+    )
 
     # Initialize execution handlers with event loop for thread-safe dispatch
     try:
         loop = asyncio.get_running_loop()
         from services.trading_execution.execution_handler import execution_handler
         from services.trading_execution.trade_prep import trade_prep_service
-        
+
         execution_handler.initialize(loop)
         trade_prep_service.initialize(loop)
-        logger.info("✅ Execution handlers initialized with event loop for thread-safe dispatch.")
+        logger.debug(
+            "✅ Execution handlers initialized with event loop for thread-safe dispatch."
+        )
     except Exception as e:
         logger.error(f"❌ Failed to initialize execution handlers with loop: {e}")
 
     try:
         # 1. DB initialization
         db = next(get_db())
-        logger.info("✅ DB session initialized.")
+        logger.debug("✅ DB session initialized.")
         db.close()
 
         # 2. Redis health check
         redis_status = trading_redis.health_check()
-        logger.info(f"🔧 Redis status: {redis_status['message']}")
+        logger.debug(f"🔧 Redis status: {redis_status['message']}")
+
 
         # 🚀 BACKGROUND INITIALIZATION: Move heavy tasks to background to prevent startup blocking
         async def initialize_services_background():
             """Initialize heavy services in background"""
             global instrument_service_instance
-            
+
             try:
                 # 3. Initialize instrument service FIRST
-                logger.info("🔧 Initializing Instrument Service in background...")
+                logger.debug("🔧 Initializing Instrument Service in background...")
                 from services.instrument_refresh_service import get_trading_service
 
                 instrument_service = get_trading_service()
@@ -503,7 +523,7 @@ async def lifespan(app: FastAPI):
                 initialization_result = await instrument_service.initialize_service()
 
                 if initialization_result.status == "success":
-                    logger.info(
+                    logger.debug(
                         f"✅ Instrument service initialized with {initialization_result.mapped_stocks} stocks"
                     )
                     instrument_service_instance = instrument_service
@@ -511,27 +531,41 @@ async def lifespan(app: FastAPI):
                     logger.error(
                         f"❌ Instrument service initialization failed: {initialization_result.error}"
                     )
-                    log_structured(event="APP_STARTUP_ERROR", level="ERROR", message=f"Instrument service init failed: {initialization_result.error}")
+                    log_structured(
+                        event="APP_STARTUP_ERROR",
+                        level="ERROR",
+                        message=f"Instrument service init failed: {initialization_result.error}",
+                    )
 
                 # 4. Initialize optimized market data service
                 try:
-                    logger.info("🚀 Initializing Optimized Market Data Service...")
-                    from services.optimized_market_data_service import optimized_market_service
+                    logger.debug("🚀 Initializing Optimized Market Data Service...")
+                    from services.optimized_market_data_service import (
+                        optimized_market_service,
+                    )
 
                     await optimized_market_service.initialize_instruments()
                     stats = optimized_market_service.get_stats()
-                    logger.info(
+                    logger.debug(
                         f"✅ Optimized Market Service initialized with {stats['total_instruments']} instruments, {stats['active_instruments']} active"
                     )
                 except Exception as e:
-                    logger.error(f"❌ Optimized market service initialization failed: {e}")
-                    log_structured(event="APP_STARTUP_ERROR", level="ERROR", message=f"Optimized market service init failed: {str(e)}")
+                    logger.error(
+                        f"❌ Optimized market service initialization failed: {e}"
+                    )
+                    log_structured(
+                        event="APP_STARTUP_ERROR",
+                        level="ERROR",
+                        message=f"Optimized market service init failed: {str(e)}",
+                    )
 
                 # 4.5. Initialize Real-Time Market Analytics Engine
                 try:
-                    logger.info("📊 Initializing Real-Time Market Analytics Engine...")
+                    logger.debug("📊 Initializing Real-Time Market Analytics Engine...")
                     from services.realtime_market_engine import initialize_market_engine
-                    from services.instrument_refresh_service import get_analytics_metadata
+                    from services.instrument_refresh_service import (
+                        get_analytics_metadata,
+                    )
 
                     # Get analytics metadata from instrument service
                     analytics_metadata = get_analytics_metadata()
@@ -545,11 +579,11 @@ async def lifespan(app: FastAPI):
                         engine = get_market_engine()
                         stats = engine.get_stats()
 
-                        logger.info(
+                        logger.debug(
                             f"✅ Real-Time Analytics Engine initialized with {stats['total_instruments']} instruments "
                             f"across {stats['sectors']} sectors"
                         )
-                        logger.info(
+                        logger.debug(
                             f"📈 Analytics latency: {stats['analytics_latency_ms']:.2f}ms"
                         )
                     else:
@@ -558,22 +592,33 @@ async def lifespan(app: FastAPI):
                         )
 
                 except Exception as e:
-                    logger.error(f"❌ Real-Time Analytics Engine initialization failed: {e}")
+                    logger.error(
+                        f"❌ Real-Time Analytics Engine initialization failed: {e}"
+                    )
                     import traceback
+
                     logger.error(f"❌ Traceback: {traceback.format_exc()}")
-                    log_structured(event="APP_STARTUP_ERROR", level="ERROR", message=f"Analytics engine init failed: {str(e)}")
-                    
+                    log_structured(
+                        event="APP_STARTUP_ERROR",
+                        level="ERROR",
+                        message=f"Analytics engine init failed: {str(e)}",
+                    )
+
             except Exception as e:
                 logger.error(f"❌ Background service initialization failed: {e}")
-                log_structured(event="APP_STARTUP_CRITICAL_FAILURE", level="CRITICAL", message=f"Background init failed: {str(e)}")
+                log_structured(
+                    event="APP_STARTUP_CRITICAL_FAILURE",
+                    level="CRITICAL",
+                    message=f"Background init failed: {str(e)}",
+                )
 
         # Start the background initialization task
         asyncio.create_task(initialize_services_background())
-        logger.info("✅ Core services initialization started in background")
+        logger.debug("✅ Core services initialization started in background")
 
         # 4.6. 🚀 NEW: Initialize Enhanced Breakout Detection Engine
         try:
-            logger.info("🎯 Initializing Enhanced Breakout Detection Engine...")
+            logger.debug("🎯 Initializing Enhanced Breakout Detection Engine...")
             from services.enhanced_breakout_engine import (
                 initialize_breakout_engine,
                 connect_to_market_engine,
@@ -608,14 +653,14 @@ async def lifespan(app: FastAPI):
             # Connect to realtime market engine for live data feed
             if connect_to_market_engine():
                 stats = get_breakout_stats()
-                logger.info(
+                logger.debug(
                     f"✅ Enhanced Breakout Engine initialized and connected to market data"
                 )
-                logger.info(
+                logger.debug(
                     f"📊 Breakout Detection: Min Volume={stats['min_volume']}, "
                     f"Min Price={stats['min_price']}, Momentum Threshold={stats['momentum_threshold']*100}%"
                 )
-                logger.info("🔥 Real-time breakout/breakdown detection is now active!")
+                logger.debug("🔥 Real-time breakout/breakdown detection is now active!")
             else:
                 logger.warning(
                     "⚠️ Breakout engine initialized but not connected to market data"
@@ -633,11 +678,11 @@ async def lifespan(app: FastAPI):
 
         # 7c. Start Gap Detection Service
         if GAP_DETECTION_AVAILABLE:
-            logger.info("Starting Gap Detection Service...")
+            logger.debug("Starting Gap Detection Service...")
             try:
                 # Start as background task to avoid blocking startup
                 asyncio.create_task(start_gap_detection_scheduler())
-                logger.info(
+                logger.debug(
                     "Gap Detection Service started - scheduled for 9:08 AM IST daily"
                 )
             except Exception as e:
@@ -645,82 +690,84 @@ async def lifespan(app: FastAPI):
 
         # 8. NEW: Initialize Centralized WebSocket System (non-blocking)
         if CENTRALIZED_WS_AVAILABLE:
-            logger.info("🔌 Initializing NEW Centralized WebSocket System...")
+            logger.debug("🔌 Initializing NEW Centralized WebSocket System...")
             try:
                 # CRITICAL FIX: DON'T await - just create background task
                 # start_connection() will handle initialization internally
-                logger.info(
+                logger.debug(
                     "🔌 Starting Centralized WebSocket connection in background..."
                 )
                 asyncio.create_task(centralized_manager.start_connection())
-                logger.info(
+                logger.debug(
                     "✅ Centralized WebSocket background task started - continuing with other services"
                 )
 
                 # 🚀 ZERO-DELAY real-time streaming will be activated on-demand
                 # when a client connects to the /api/v1/realtime/stream WebSocket
-                logger.info("🚀 ZERO-DELAY real-time streaming available (on-demand)")
+                logger.debug("🚀 ZERO-DELAY real-time streaming available (on-demand)")
 
                 # Log initial status (don't await health check to avoid blocking)
-                logger.info(
+                logger.debug(
                     "📊 Centralized WebSocket Status: Starting in background..."
                 )
-                logger.info("📊 WebSocket will connect automatically when ready")
+                logger.debug("📊 WebSocket will connect automatically when ready")
 
                 # 🚀 ENHANCED: Connect centralized manager to unified WebSocket manager with Real-Time Analytics
-                logger.info(
+                logger.debug(
                     "🔗 Connecting centralized WebSocket manager to enhanced unified system..."
                 )
 
             except Exception as e:
                 logger.error(f"❌ NEW: Centralized WebSocket system error: {e}")
                 logger.warning("⚠️ Application will continue without live market data")
-                log_structured(event="APP_STARTUP_ERROR", level="ERROR", message=f"Centralized WS system error: {str(e)}")
+                log_structured(
+                    event="APP_STARTUP_ERROR",
+                    level="ERROR",
+                    message=f"Centralized WS system error: {str(e)}",
+                )
         else:
             logger.warning(
                 "⚠️ NEW: Centralized WebSocket system not available - using legacy only"
             )
 
         # 7.1. Initialize Upstox Token Automation (IN BACKGROUND - NON-BLOCKING)
-        logger.info("🔄 Queueing Upstox Token Automation startup...")
+        logger.debug("🔄 Queueing Upstox Token Automation startup...")
         try:
 
             async def start_upstox_in_background():
                 """Start Upstox automation in background to avoid blocking startup"""
                 try:
                     # Reduced wait time to ensure it starts reliably and visibly
-                    logger.info("⏳ Waiting 5s for server startup before initializing Upstox automation...")
+                    logger.debug(
+                        "⏳ Waiting 5s for server startup before initializing Upstox automation..."
+                    )
                     await asyncio.sleep(5)
-                    
-                    logger.info("🚀 Triggering Upstox Automation Service start...")
+
+                    logger.debug("🚀 Triggering Upstox Automation Service start...")
                     from services.upstox_automation_service import (
                         start_upstox_automation,
                     )
 
                     upstox_automation = start_upstox_automation()
                     if upstox_automation:
-                        logger.info(
+                        logger.debug(
                             "✅ Upstox token automation started successfully - Scheduler Active"
                         )
                     else:
-                        logger.warning("⚠️ Upstox token automation failed to start (returned None)")
+                        logger.warning(
+                            "⚠️ Upstox token automation failed to start (returned None)"
+                        )
                 except Exception as e:
-                    logger.warning(
-                        f"⚠️ Upstox automation background task error: {e}"
-                    )
+                    logger.warning(f"⚠️ Upstox automation background task error: {e}")
 
             # Start in background - DON'T WAIT FOR IT!
             asyncio.create_task(start_upstox_in_background())
-            logger.info(
-                "✅ Upstox automation queued in background"
-            )
+            logger.debug("✅ Upstox automation queued in background")
         except Exception as e:
-            logger.warning(
-                f"⚠️ Upstox automation task creation failed: {e}"
-            )
+            logger.warning(f"⚠️ Upstox automation task creation failed: {e}")
 
         # 7.2. Initialize MarketScheduleService - CRITICAL for FNO and Instrument automation
-        logger.info("📅 Starting MarketScheduleService...")
+        logger.debug("📅 Starting MarketScheduleService...")
         try:
             from services.market_schedule_service import get_market_scheduler
 
@@ -729,7 +776,7 @@ async def lifespan(app: FastAPI):
             market_scheduler_task = asyncio.create_task(
                 market_scheduler.start_daily_scheduler()
             )
-            logger.info(
+            logger.debug(
                 "✅ MarketScheduleService started - will handle daily FNO refresh, instrument updates, and market timing coordination"
             )
         except Exception as e:
@@ -741,12 +788,12 @@ async def lifespan(app: FastAPI):
             )
 
         # 7.3. Initialize Notification Scheduler - NEW comprehensive notification system
-        logger.info("📨 Starting Notification Scheduler...")
+        logger.debug("📨 Starting Notification Scheduler...")
         try:
             from services.notification_scheduler import notification_scheduler
 
             notification_scheduler.start_scheduler()
-            logger.info(
+            logger.debug(
                 "✅ Notification Scheduler started - handling token expiry, daily summaries, and system alerts"
             )
         except Exception as e:
@@ -758,23 +805,23 @@ async def lifespan(app: FastAPI):
             )
 
         # Now using enhanced services started earlier in the startup process
-        logger.info(
+        logger.debug(
             "🎯 Using enhanced gap and breakout detection services (numpy/pandas optimized)"
         )
 
         # 13. ✅ NEW: Start Auto Trading WebSocket Service
         # TODO Handled this later to start when it needed
         if True:
-            logger.info("🔴 Starting Auto Trading WebSocket Service...")
+            logger.debug("🔴 Starting Auto Trading WebSocket Service...")
             try:
 
-                logger.info("✅ Auto Trading WebSocket Service started")
+                logger.debug("✅ Auto Trading WebSocket Service started")
             except Exception as e:
                 logger.error(f"❌ Auto Trading WebSocket Service failed to start: {e}")
 
         # 15.6. 🚀 NEW: Start Auto-Trade Scheduler for automatic WebSocket management
         if TRADING_EXECUTION_AVAILABLE:
-            logger.info("⏰ Starting Auto-Trade Scheduler...")
+            logger.debug("⏰ Starting Auto-Trade Scheduler...")
             try:
                 from services.trading_execution.auto_trade_scheduler import (
                     auto_trade_scheduler,
@@ -788,11 +835,11 @@ async def lifespan(app: FastAPI):
                         trading_mode=TradingMode.PAPER  # Default to paper trading for safety
                     )
                 )
-                logger.info("✅ Auto-Trade Scheduler started (multi-user mode)")
-                logger.info(
+                logger.debug("✅ Auto-Trade Scheduler started (multi-user mode)")
+                logger.debug(
                     "📌 Auto-trading will start at 9:15 AM when ANY user has stocks selected"
                 )
-                logger.info(
+                logger.debug(
                     "📌 Monitoring ALL users with active broker configs automatically"
                 )
 
@@ -800,7 +847,7 @@ async def lifespan(app: FastAPI):
                 logger.error(f"❌ Auto-Trade Scheduler failed to start: {e}")
 
         # 16. 🚀 NEW: Initialize Intelligent Stock Selection Service
-        logger.info("🧠 Initializing Intelligent Stock Selection Service...")
+        logger.debug("🧠 Initializing Intelligent Stock Selection Service...")
         try:
             from services.intelligent_stock_selection_service import (
                 intelligent_stock_selector,
@@ -808,7 +855,7 @@ async def lifespan(app: FastAPI):
 
             # CRITICAL FIX: Don't await - run in background to prevent blocking
             asyncio.create_task(intelligent_stock_selector.initialize_services())
-            logger.info(
+            logger.debug(
                 "✅ Intelligent Stock Selection Service initialization started in background"
             )
         except ImportError as e:
@@ -819,69 +866,76 @@ async def lifespan(app: FastAPI):
             )
 
         # 17. 🚀 NEW: Initialize MCX WebSocket Service
-        logger.info("📊 Initializing MCX WebSocket Service...")
+        logger.debug("📊 Initializing MCX WebSocket Service...")
         try:
             from services.websocket.mcx.integration import initialize_mcx_service
 
             # CRITICAL FIX: Don't await - run in background to prevent blocking
             asyncio.create_task(initialize_mcx_service())
-            logger.info("✅ MCX WebSocket Service initialization started in background")
+            logger.debug("✅ MCX WebSocket Service initialization started in background")
         except ImportError as e:
             logger.warning(f"⚠️ MCX WebSocket Service not available: {e}")
         except Exception as e:
             logger.error(f"❌ MCX WebSocket Service failed to initialize: {e}")
 
-        logger.info("=" * 80)
+        logger.debug("=" * 80)
         logger.info("🟢 ALL SERVICES STARTED SUCCESSFULLY!")
-        logger.info("=" * 80)
-        logger.info("📊 Trading Application is ready to accept requests")
-        logger.info("🔌 WebSocket connections are running in background")
-        logger.info(
+        logger.debug("=" * 80)
+        logger.debug("📊 Trading Application is ready to accept requests")
+        logger.debug("🔌 WebSocket connections are running in background")
+        logger.debug(
             "⚠️ If WebSocket shows network errors, the app will still work without live data"
         )
-        logger.info("=" * 80)
+        logger.debug("=" * 80)
 
         # Signal that startup is complete and token refresh can now proceed
         if CENTRALIZED_WS_AVAILABLE and centralized_manager:
             try:
                 centralized_manager.mark_startup_complete()
-                logger.info("✅ Marked startup complete - token refresh enabled")
+                logger.debug("✅ Marked startup complete - token refresh enabled")
             except Exception as e:
                 logger.warning(f"⚠️ Error marking startup complete: {e}")
 
         # Start simple unified WebSocket broadcast task
         try:
-            logger.info("🚀 Starting Simple Unified WebSocket System...")
+            logger.debug("🚀 Starting Simple Unified WebSocket System...")
             from router.unified_websocket_routes import register_engine_listeners
 
             register_engine_listeners()
-            logger.info("✅ Simple Unified WebSocket broadcast started")
+            logger.debug("✅ Simple Unified WebSocket broadcast started")
         except Exception as e:
             logger.error(f"❌ Failed to start Unified WebSocket broadcast: {e}")
 
         logger.info("🎯 Application is fully operational and ready for trading!")
-        
-        log_structured(event="APP_STARTUP_COMPLETE", message="Application startup completed successfully")
+
+        log_structured(
+            event="APP_STARTUP_COMPLETE",
+            message="Application startup completed successfully",
+        )
 
         yield
 
     except Exception as e:
         logger.exception("🔥 Enhanced lifespan startup failed - but app will continue")
-        log_structured(event="APP_STARTUP_CRITICAL_FAILURE", level="CRITICAL", message=str(e))
+        log_structured(
+            event="APP_STARTUP_CRITICAL_FAILURE", level="CRITICAL", message=str(e)
+        )
         yield
     finally:
         # Enhanced cleanup
         logger.info("🛑 Starting enhanced shutdown...")
-        log_structured(event="APP_SHUTDOWN_START", message="Starting application shutdown")
+        log_structured(
+            event="APP_SHUTDOWN_START", message="Starting application shutdown"
+        )
 
         # Unified WebSocket connections cleanup (handled automatically by FastAPI)
-        logger.info("✅ Unified WebSocket connections will be cleaned up by FastAPI")
+        logger.debug("✅ Unified WebSocket connections will be cleaned up by FastAPI")
 
         # NEW: Stop centralized WebSocket system
         if CENTRALIZED_WS_AVAILABLE and centralized_manager:
             try:
                 await centralized_manager.stop()
-                logger.info("✅ NEW: Centralized WebSocket system stopped")
+                logger.debug("✅ NEW: Centralized WebSocket system stopped")
             except Exception as e:
                 logger.error(f"Error stopping centralized WebSocket: {e}")
 
@@ -890,7 +944,7 @@ async def lifespan(app: FastAPI):
             from services.websocket.mcx.integration import stop_mcx_service
 
             await stop_mcx_service()
-            logger.info("✅ MCX WebSocket service stopped")
+            logger.debug("✅ MCX WebSocket service stopped")
         except ImportError:
             pass  # MCX service not available
         except Exception as e:
@@ -921,7 +975,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Error stopping market scheduler: {e}")
 
-        logger.info(
+        logger.debug(
             "🎯 Enhanced gap and breakout detection services shutdown completed"
         )
 
@@ -930,12 +984,19 @@ async def lifespan(app: FastAPI):
             from services.upstox_automation_service import stop_upstox_automation
 
             stop_upstox_automation()
-            logger.info("✅ Upstox token automation stopped")
+            logger.debug("✅ Upstox token automation stopped")
         except Exception as e:
             logger.error(f"Error stopping Upstox automation: {e}")
 
         logger.info("🛑 Enhanced lifespan shutdown complete.")
-        log_structured(event="APP_SHUTDOWN_COMPLETE", message="Application shutdown completed")
+        log_structured(
+            event="APP_SHUTDOWN_COMPLETE", message="Application shutdown completed"
+        )
+        
+        # FINAL MEMORY CLEANUP
+        import gc
+        gc.collect()
+        logger.debug("🧹 Final garbage collection completed")
 
 
 # FIXED: Enhanced trading engine startup function
@@ -947,14 +1008,14 @@ async def start_enhanced_trading_engine():
 
     while retry_count < max_retries:
         try:
-            logger.info(
+            logger.debug(
                 f"🚀 Starting Enhanced Trading Engine (attempt {retry_count + 1}/{max_retries})"
             )
 
             # Start the trading engine
             if trading_engine:
                 await trading_engine.start_trading_engine()
-                logger.info("✅ Enhanced Trading Engine started successfully")
+                logger.debug("✅ Enhanced Trading Engine started successfully")
                 break
             else:
                 logger.error("Trading engine not initialized")
@@ -968,7 +1029,7 @@ async def start_enhanced_trading_engine():
 
             if retry_count < max_retries:
                 wait_time = 60 * retry_count
-                logger.info(f"⏳ Retrying in {wait_time} seconds...")
+                logger.debug(f"⏳ Retrying in {wait_time} seconds...")
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(
@@ -1048,7 +1109,7 @@ try:
     app.include_router(
         unified_websocket_router, tags=["🚀 Unified WebSocket - Real-Time"]
     )
-    logger.info("✅ Simple Unified WebSocket routes registered")
+    logger.debug("✅ Simple Unified WebSocket routes registered")
 except ImportError as e:
     logger.warning(f"⚠️ Unified WebSocket routes not available: {e}")
 
@@ -1064,7 +1125,7 @@ try:
     from router.nifty_strategy_router import nifty_strategy_router
 
     app.include_router(nifty_strategy_router, tags=["NIFTY 09:40 Strategy"])
-    logger.info("✅ NIFTY 09:40 Strategy routes registered")
+    logger.debug("✅ NIFTY 09:40 Strategy routes registered")
 except ImportError as e:
     logger.warning(f"⚠️ NIFTY strategy routes not available: {e}")
 
@@ -1076,11 +1137,11 @@ try:
     app.include_router(
         realtime_stream_router, tags=["🚀 ZERO-DELAY Real-time Streaming"]
     )
-    logger.info("✅ 🚀 ZERO-DELAY real-time streaming routes registered")
+    logger.debug("✅ 🚀 ZERO-DELAY real-time streaming routes registered")
 except ImportError as e:
     logger.warning(f"⚠️ Real-time streaming routes not available: {e}")
     # Breakout router removed - using enhanced_breakout_engine instead
-    logger.info("✅ Using enhanced_breakout_engine for breakout functionality")
+    logger.debug("✅ Using enhanced_breakout_engine for breakout functionality")
 
 # NEW: Add centralized WebSocket routes
 if CENTRALIZED_ROUTES_AVAILABLE:
@@ -1089,14 +1150,14 @@ if CENTRALIZED_ROUTES_AVAILABLE:
         prefix="/api/v1",
         tags=["NEW: Centralized WebSocket"],
     )
-    logger.info("✅ NEW: Centralized WebSocket routes registered")
+    logger.debug("✅ NEW: Centralized WebSocket routes registered")
 else:
     logger.error("❌ NEW: Centralized WebSocket routes not available")
 
 # Legacy market WebSocket for backward compatibility
 if LEGACY_MARKET_WS_AVAILABLE:
     app.include_router(legacy_market_ws_router, tags=["Legacy Market WebSocket"])
-    logger.info(
+    logger.debug(
         "✅ Legacy market WebSocket routes available for backward compatibility"
     )
 
@@ -1111,7 +1172,7 @@ async def preflight_handler(full_path: str):
 # SOCKET.IO SETUP - Simplified Integration for Stability
 # ============================================================================
 # Temporarily use basic Socket.IO setup to avoid ASGI compatibility issues
-logger.info("🔧 Initializing Socket.IO with basic setup for stability")
+logger.debug("🔧 Initializing Socket.IO with basic setup for stability")
 sio = socketio.AsyncServer(
     async_mode="asgi", cors_allowed_origins=ALLOWED_ORIGINS, engineio_logger=False
 )
@@ -1276,21 +1337,6 @@ async def root():
             "analytics": checks,
         },
     }
-
-
-@app.get("/api/v1/trading/{symbol}")
-async def get_trading_data(symbol: str):
-    """Get comprehensive trading data for a symbol"""
-    try:
-        from services.instrument_registry import instrument_registry
-
-        return {
-            "success": True,
-            "updated_at": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"❌ Error getting trading data for {symbol}: {e}")
-        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/v1/system/refresh-instruments")
@@ -1613,7 +1659,12 @@ async def restart_trading_engine():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global error on {request.url}: {str(exc)}")
-    log_structured(event="GLOBAL_EXCEPTION", level="ERROR", message=f"Unhandled exception on {request.url}", data={"error": str(exc), "url": str(request.url)})
+    log_structured(
+        event="GLOBAL_EXCEPTION",
+        level="ERROR",
+        message=f"Unhandled exception on {request.url}",
+        data={"error": str(exc), "url": str(request.url)},
+    )
 
     # Don't expose Redis connection errors
     if "redis" in str(exc).lower() or "connection" in str(exc).lower():
@@ -1700,20 +1751,20 @@ if __name__ == "__main__":
     # Apply filter to suppress noisy access logs
     logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
-    logger.info(
+    logger.debug(
         "🚀 Launching Enhanced Trading Platform with NEW Centralized WebSocket System..."
     )
 
     # Log system configuration
-    logger.info(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
-    logger.info(f"🔧 Redis Enabled: {os.getenv('REDIS_ENABLED', 'true')}")
-    logger.info(
+    logger.debug(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    logger.debug(f"🔧 Redis Enabled: {os.getenv('REDIS_ENABLED', 'true')}")
+    logger.debug(
         f"🔧 NEW Centralized WebSocket: {'Available' if CENTRALIZED_WS_AVAILABLE else 'Not Available'}"
     )
-    logger.info(
+    logger.debug(
         f"🔧 NEW Centralized Routes: {'Available' if CENTRALIZED_ROUTES_AVAILABLE else 'Not Available'}"
     )
-    logger.info(
+    logger.debug(
         f"🔧 Legacy WebSocket: {'Available' if LEGACY_MARKET_WS_AVAILABLE else 'Not Available'}"
     )
 
@@ -1721,7 +1772,7 @@ if __name__ == "__main__":
         "app:sio_app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
-        log_level="info",
+        log_level="warning",
         reload=os.getenv("DEBUG", "false").lower() == "true",
         workers=1,
     )
