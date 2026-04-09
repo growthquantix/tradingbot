@@ -4,68 +4,91 @@ Includes structured logging, error tracking, audit trails, and compliance loggin
 """
 import logging
 import logging.handlers
+import time
+import os
+import sys
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Optional, List
+from contextlib import contextmanager
+
+# Optional: Try to import concurrent-log-handler for safe multi-process logging
 try:
     from concurrent_log_handler import ConcurrentRotatingFileHandler
     HAS_CONCURRENT_LOG = True
 except ImportError:
     HAS_CONCURRENT_LOG = False
-import json
-import sys
-import traceback
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Optional
-import os
-from contextlib import contextmanager
-import uuid
+
+class ThrottledFilter(logging.Filter):
+    """
+    Filter that silences noisy INFO logs by default in production.
+    Can be enabled via ENABLE_NOISY_LOGS=true environment variable.
+    """
+    def __init__(self, name="", interval=60, max_cache_size=1000):
+        super().__init__(name)
+        self.interval = interval
+        self.max_cache_size = max_cache_size
+        self.last_logged = {}
+        # Check if noisy logs are explicitly enabled
+        self.show_noisy = os.getenv('ENABLE_NOISY_LOGS', 'false').lower() == 'true'
+
+    def filter(self, record):
+        # Always allow WARNING, ERROR, CRITICAL
+        if record.levelno >= logging.WARNING:
+            return True
+            
+        # If noisy logs are enabled, allow them (with optional throttling)
+        if self.show_noisy:
+            return True
+
+        # logic to identify and SILENCE noisy logs
+        msg_key = record.getMessage()
+        
+        # Patterns that should be hidden in production by default
+        is_noisy = any(pattern.lower() in msg_key.lower() for pattern in [
+            "Received data", "PnL Update", "Heartbeat", "Broadcast", "tick data", 
+            "ltp update", "Processed", "Instrument", "Analytics", "Engine", "Socket",
+            "WebSocket", "Connecting", "Disconnecting", "Sentiment", "Heatmap"
+        ])
+        
+        if is_noisy:
+            # Completely silence these in production unless ENABLE_NOISY_LOGS is true
+            return False
+            
+        return True
+
+class ProductionFormatter(logging.Formatter):
+    """Compact string-based formatter for production to minimize cost/overhead"""
+    def format(self, record: logging.LogRecord) -> str:
+        # Extremely compact format for production logs to save costs
+        # [Level] Name: Message
+        level = record.levelname[0] # Single letter level
+        timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime('%H:%M:%S')
+        return f"[{level}][{timestamp}] {record.name}: {record.getMessage()}"
 
 class TradingFormatter(logging.Formatter):
-    """Custom formatter for trading application with structured logging"""
+    """Custom formatter for trading application with structured logging (Development)"""
     
     def format(self, record: logging.LogRecord) -> str:
-        # Create structured log entry
+        # Create optimized structured log entry
         log_entry = {
-            'timestamp': datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-            'level': record.levelname,
-            'logger': record.name,
-            'message': record.getMessage(),
-            'module': record.module,
-            'function': record.funcName,
-            'line': record.lineno,
-            'thread_id': record.thread,
-            'process_id': record.process,
+            't': datetime.fromtimestamp(record.created, tz=timezone.utc).strftime('%H:%M:%S'),
+            'l': record.levelname[:1],
+            'n': record.name,
+            'm': record.getMessage(),
         }
         
-        # Add extra fields if present
-        if hasattr(record, 'user_id'):
-            log_entry['user_id'] = record.user_id
-        if hasattr(record, 'broker'):
-            log_entry['broker'] = record.broker
-        if hasattr(record, 'trade_id'):
-            log_entry['trade_id'] = record.trade_id
-        if hasattr(record, 'order_id'):
-            log_entry['order_id'] = record.order_id
-        if hasattr(record, 'symbol'):
-            log_entry['symbol'] = record.symbol
-        if hasattr(record, 'amount'):
-            log_entry['amount'] = record.amount
-        if hasattr(record, 'request_id'):
-            log_entry['request_id'] = record.request_id
-            
-        # Add exception info if present
         if record.exc_info:
-            log_entry['exception'] = {
-                'type': record.exc_info[0].__name__,
-                'message': str(record.exc_info[1]),
-                'traceback': traceback.format_exception(*record.exc_info)
-            }
+            log_entry['ex'] = str(record.exc_info[1])
             
         return json.dumps(log_entry, ensure_ascii=False)
 
 class AuditLogger:
     """Dedicated audit logger for compliance and regulatory requirements"""
     
-    def __init__(self, log_dir: str = "logs/audit"):
+    def __init__(self, log_dir: str = "logs/audit", silent: bool = False):
         self._is_production = (
             os.getenv('ENVIRONMENT') == 'production' or os.getenv('RAILWAY_ENVIRONMENT')
         )
@@ -75,15 +98,23 @@ class AuditLogger:
         
         # Create audit logger
         self.logger = logging.getLogger('audit')
+        
+        # If silent mode, set to a level that won't log anything
+        if silent and self._is_production:
+            self.logger.setLevel(logging.CRITICAL + 1)
+            self.logger.addHandler(logging.NullHandler())
+            self.logger.propagate = False
+            return
+            
         self.logger.setLevel(logging.INFO)
         
         # Remove default handlers to avoid duplication
         self.logger.handlers.clear()
         
         if self._is_production:
-            # In production, log audit events to stdout (structured JSON)
+            # In production, use compact string logging to save costs
             console_handler = logging.StreamHandler(sys.stdout)
-            console_handler.setFormatter(TradingFormatter())
+            console_handler.setFormatter(ProductionFormatter())
             self.logger.addHandler(console_handler)
         else:
             # File handler for audit logs (concurrent-safe rotation)
@@ -172,7 +203,7 @@ class AuditLogger:
 class TradingLogger:
     """Main production logging setup for trading application"""
     
-    def __init__(self, app_name: str = "TradingBot", log_level: str = "INFO"):
+    def __init__(self, app_name: str = "TradingBot", log_level: str = "WARNING"):
         self.app_name = app_name
         # Enhanced production detection
         self._is_production = (
@@ -180,6 +211,12 @@ class TradingLogger:
             os.getenv('RAILWAY_ENVIRONMENT') is not None or
             os.getenv('RAILWAY_STATIC_URL') is not None
         )
+        
+        # Check for absolute silence mode (to save costs in production)
+        self._silent_mode = log_level.upper() in ('SILENT', 'NONE', 'OFF')
+        if self._silent_mode:
+            log_level = "CRITICAL"
+            
         self.log_dir = Path("logs")
         
         # Only create directories if NOT in production
@@ -190,30 +227,61 @@ class TradingLogger:
             (self.log_dir / "errors").mkdir(exist_ok=True)
             (self.log_dir / "performance").mkdir(exist_ok=True)
         
+        # Silence noisy third-party loggers in production
+        if self._is_production:
+            for noisy_logger in [
+                'urllib3', 'apscheduler', 'matplotlib', 'playwright', 
+                'uvicorn.access', 'engineio', 'socketio', 'tensorflow',
+                'h11', 'httpcore', 'httpx', 'asyncio', 'sqlalchemy',
+                'pydantic', 'fastapi', 'selenium', 'multiprocessing'
+            ]:
+                logging.getLogger(noisy_logger).setLevel(logging.CRITICAL if self._silent_mode else logging.WARNING)
+
+        # Force WARNING level in production if not explicitly set to something else
+        if self._is_production and os.getenv('LOG_LEVEL') is None and not self._silent_mode:
+            log_level = "WARNING"
+
+        # If in production and silent mode, monkey-patch print to stop the flood
+        if self._is_production and self._silent_mode:
+            # This completely stops all 'print()' calls from emitting anything to stdout
+            # without refactoring hundreds of files.
+            import builtins
+            builtins.print = lambda *args, **kwargs: None
+
         # Set up loggers
         self.setup_application_logger(log_level)
-        self.setup_trading_logger()
+        self.setup_trading_logger(log_level)
         self.setup_error_logger()
-        self.setup_performance_logger()
+        self.setup_performance_logger(log_level)
         
         # Initialize audit logger
-        self.audit = AuditLogger()
+        self.audit = AuditLogger(silent=self._silent_mode)
         
     def setup_application_logger(self, log_level: str):
         """Set up main application logger"""
         logger = logging.getLogger()
-        logger.setLevel(getattr(logging, log_level.upper()))
+        level = getattr(logging, log_level.upper())
+        logger.setLevel(level)
         
         # Remove default handlers
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
             
+        # If silent mode, we don't even add a console handler
+        if self._is_production and self._silent_mode:
+            logger.addHandler(logging.NullHandler())
+            return
+
         # Console handler - ALWAYS ENABLED FOR CLOUD PLATFORMS (Railway, Render, etc.)
         console_handler = logging.StreamHandler(sys.stdout)
         
-        # In production, use structured JSON logging even for console
+        # Apply ThrottledFilter to prevent cost spikes from ticks/pnl updates
+        # Still allows all WARNING and ERROR logs through immediately
+        console_handler.addFilter(ThrottledFilter(interval=60))
+        
+        # In production, use compact string logging to save costs
         if os.getenv('ENVIRONMENT') == 'production' or os.getenv('RAILWAY_ENVIRONMENT'):
-            console_handler.setFormatter(TradingFormatter())
+            console_handler.setFormatter(ProductionFormatter())
         else:
             console_formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -222,30 +290,14 @@ class TradingLogger:
             
         logger.addHandler(console_handler)
         
-        # File handler with rotation (non-production only)
-        if not self._is_production:
-            if HAS_CONCURRENT_LOG:
-                file_handler = ConcurrentRotatingFileHandler(
-                    filename=self.log_dir / "application" / "app.log",
-                    mode='a',
-                    maxBytes=10 * 1024 * 1024, # 10MB
-                    backupCount=30,
-                    encoding='utf-8'
-                )
-            else:
-                file_handler = logging.handlers.RotatingFileHandler(
-                    filename=self.log_dir / "application" / "app.log",
-                    maxBytes=10 * 1024 * 1024,
-                    backupCount=30,
-                    encoding='utf-8'
-                )
-            file_handler.setFormatter(TradingFormatter())
-            logger.addHandler(file_handler)
-        
-    def setup_trading_logger(self):
+    def setup_trading_logger(self, log_level: Optional[str] = None):
         """Set up dedicated trading operations logger"""
         trading_logger = logging.getLogger('trading')
-        trading_logger.setLevel(logging.INFO)
+        
+        # Use provided level, or current instance level, or default to WARNING
+        effective_level = log_level or os.getenv('LOG_LEVEL', 'WARNING')
+        level = getattr(logging, effective_level.upper())
+        trading_logger.setLevel(level)
         
         # Trading operations log (non-production only)
         if not self._is_production:
@@ -310,10 +362,15 @@ class TradingLogger:
             
         error_logger.propagate = False
         
-    def setup_performance_logger(self):
+    def setup_performance_logger(self, log_level: Optional[str] = None):
         """Set up performance monitoring logger"""
         perf_logger = logging.getLogger('performance')
-        perf_logger.setLevel(logging.INFO)
+        
+        # Use provided level, or current instance level, or default to WARNING
+        effective_level = log_level or os.getenv('LOG_LEVEL', 'WARNING')
+        level = getattr(logging, effective_level.upper())
+        perf_logger.setLevel(level)
+
         
         # Performance log file (non-production only)
         if not self._is_production:
@@ -344,15 +401,18 @@ def get_trading_logger() -> TradingLogger:
     """Get or create the global trading logger instance"""
     global _trading_logger
     if _trading_logger is None:
-        log_level = os.getenv('LOG_LEVEL', 'INFO')
+        log_level = os.getenv('LOG_LEVEL', 'WARNING')
         _trading_logger = TradingLogger(log_level=log_level)
     return _trading_logger
+
 
 def get_audit_logger() -> AuditLogger:
     """Get or create the global audit logger instance"""
     global _audit_logger
     if _audit_logger is None:
-        _audit_logger = AuditLogger()
+        log_level = os.getenv('LOG_LEVEL', 'WARNING')
+        silent = log_level.upper() in ('SILENT', 'NONE', 'OFF')
+        _audit_logger = AuditLogger(silent=silent)
     return _audit_logger
 
 @contextmanager
