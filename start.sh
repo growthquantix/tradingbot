@@ -8,7 +8,7 @@ export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 PORT=${PORT:-8000}
 
 echo "Running Alembic database migrations..."
-alembic upgrade head
+alembic upgrade head --quiet
 
-echo "Starting FastAPI server with SocketIO on port $PORT..."
-exec uvicorn app:sio_app --host 0.0.0.0 --port $PORT --workers 1
+echo "Starting FastAPI server on port $PORT..."
+exec uvicorn app:sio_app --host 0.0.0.0 --port $PORT --workers 1 --log-level warning

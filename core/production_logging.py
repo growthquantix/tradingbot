@@ -23,50 +23,73 @@ except ImportError:
 
 class ThrottledFilter(logging.Filter):
     """
-    Filter that silences noisy INFO logs by default in production.
-    Can be enabled via ENABLE_NOISY_LOGS=true environment variable.
+    Filter that silences noisy logs by default in production.
+    - Completely silences common "noise" patterns (INFO level)
+    - Throttles REPETITIVE errors to prevent log floods (ERROR level)
     """
     def __init__(self, name="", interval=60, max_cache_size=1000):
         super().__init__(name)
         self.interval = interval
         self.max_cache_size = max_cache_size
         self.last_logged = {}
+        self.error_counts = {}
         # Check if noisy logs are explicitly enabled
         self.show_noisy = os.getenv('ENABLE_NOISY_LOGS', 'false').lower() == 'true'
 
     def filter(self, record):
-        # Always allow WARNING, ERROR, CRITICAL
+        # Handle ERROR/WARNING throttling
         if record.levelno >= logging.WARNING:
+            msg_key = f"{record.levelno}:{record.name}:{record.getMessage()[:100]}"
+            now = time.time()
+            
+            # If we've seen this exact error recently, throttle it
+            if msg_key in self.last_logged:
+                if now - self.last_logged[msg_key] < self.interval:
+                    self.error_counts[msg_key] = self.error_counts.get(msg_key, 0) + 1
+                    return False
+                else:
+                    # Log the summary of missed errors if any
+                    missed = self.error_counts.get(msg_key, 0)
+                    if missed > 0:
+                        record.msg = f"{record.msg} (Suppressed {missed} similar logs in last {self.interval}s)"
+                        self.error_counts[msg_key] = 0
+            
+            self.last_logged[msg_key] = now
             return True
             
-        # If noisy logs are enabled, allow them (with optional throttling)
+        # If noisy logs are enabled, allow them
         if self.show_noisy:
             return True
 
-        # logic to identify and SILENCE noisy logs
+        # logic to identify and SILENCE noisy logs (INFO/DEBUG)
         msg_key = record.getMessage()
         
-        # Patterns that should be hidden in production by default
+        # Extended patterns that should be hidden in production by default
         is_noisy = any(pattern.lower() in msg_key.lower() for pattern in [
             "Received data", "PnL Update", "Heartbeat", "Broadcast", "tick data", 
             "ltp update", "Processed", "Instrument", "Analytics", "Engine", "Socket",
-            "WebSocket", "Connecting", "Disconnecting", "Sentiment", "Heatmap"
+            "WebSocket", "Connecting", "Disconnecting", "Sentiment", "Heatmap",
+            "Updating", "Calculating", "Fetching", "Cached", "Market Data"
         ])
         
         if is_noisy:
-            # Completely silence these in production unless ENABLE_NOISY_LOGS is true
             return False
             
         return True
 
 class ProductionFormatter(logging.Formatter):
-    """Compact string-based formatter for production to minimize cost/overhead"""
+    """Extremely compact string-based formatter for production to minimize cost/overhead"""
     def format(self, record: logging.LogRecord) -> str:
-        # Extremely compact format for production logs to save costs
-        # [Level] Name: Message
-        level = record.levelname[0] # Single letter level
+        # Ultra compact format: [L][HH:MM:SS] Name: Msg
+        level = record.levelname[0]
+        # Use simple HH:MM:SS to save bytes
         timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime('%H:%M:%S')
-        return f"[{level}][{timestamp}] {record.name}: {record.getMessage()}"
+        # Limit message length to prevent massive cost spikes from large JSON objects
+        msg = record.getMessage()
+        if len(msg) > 500:
+            msg = msg[:497] + "..."
+            
+        return f"[{level}][{timestamp}] {record.name}: {msg}"
 
 class TradingFormatter(logging.Formatter):
     """Custom formatter for trading application with structured logging (Development)"""
