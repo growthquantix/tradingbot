@@ -260,7 +260,10 @@ class TradingLogger:
     def setup_application_logger(self, log_level: str):
         """Set up main application logger"""
         logger = logging.getLogger()
-        level = getattr(logging, log_level.upper())
+        
+        # Map 'SILENT' or invalid levels to CRITICAL or WARNING
+        level_map = {'SILENT': logging.CRITICAL, 'NONE': logging.CRITICAL, 'OFF': logging.CRITICAL}
+        level = level_map.get(log_level.upper(), getattr(logging, log_level.upper(), logging.WARNING))
         logger.setLevel(level)
         
         # Remove default handlers
@@ -296,7 +299,10 @@ class TradingLogger:
         
         # Use provided level, or current instance level, or default to WARNING
         effective_level = log_level or os.getenv('LOG_LEVEL', 'WARNING')
-        level = getattr(logging, effective_level.upper())
+        
+        # Map 'SILENT' or invalid levels to CRITICAL or WARNING
+        level_map = {'SILENT': logging.CRITICAL, 'NONE': logging.CRITICAL, 'OFF': logging.CRITICAL}
+        level = level_map.get(effective_level.upper(), getattr(logging, effective_level.upper(), logging.WARNING))
         trading_logger.setLevel(level)
         
         # Trading operations log (non-production only)
@@ -368,7 +374,10 @@ class TradingLogger:
         
         # Use provided level, or current instance level, or default to WARNING
         effective_level = log_level or os.getenv('LOG_LEVEL', 'WARNING')
-        level = getattr(logging, effective_level.upper())
+        
+        # Map 'SILENT' or invalid levels to CRITICAL or WARNING
+        level_map = {'SILENT': logging.CRITICAL, 'NONE': logging.CRITICAL, 'OFF': logging.CRITICAL}
+        level = level_map.get(effective_level.upper(), getattr(logging, effective_level.upper(), logging.WARNING))
         perf_logger.setLevel(level)
 
         
