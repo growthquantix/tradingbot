@@ -21,6 +21,8 @@ try:
 except ImportError:
     HAS_CONCURRENT_LOG = False
 
+from collections import OrderedDict
+
 class ThrottledFilter(logging.Filter):
     """
     Filter that silences noisy logs by default in production.
@@ -31,7 +33,7 @@ class ThrottledFilter(logging.Filter):
         super().__init__(name)
         self.interval = interval
         self.max_cache_size = max_cache_size
-        self.last_logged = {}
+        self.last_logged = OrderedDict()
         self.error_counts = {}
         # Check if noisy logs are explicitly enabled
         self.show_noisy = os.getenv('ENABLE_NOISY_LOGS', 'false').lower() == 'true'
@@ -44,6 +46,8 @@ class ThrottledFilter(logging.Filter):
             
             # If we've seen this exact error recently, throttle it
             if msg_key in self.last_logged:
+                # Move to end to maintain LRU
+                self.last_logged.move_to_end(msg_key)
                 if now - self.last_logged[msg_key] < self.interval:
                     self.error_counts[msg_key] = self.error_counts.get(msg_key, 0) + 1
                     return False
@@ -53,6 +57,11 @@ class ThrottledFilter(logging.Filter):
                     if missed > 0:
                         record.msg = f"{record.msg} (Suppressed {missed} similar logs in last {self.interval}s)"
                         self.error_counts[msg_key] = 0
+            
+            # Enforce cache size limit (LRU pruning)
+            if len(self.last_logged) >= self.max_cache_size and msg_key not in self.last_logged:
+                oldest_key, _ = self.last_logged.popitem(last=False)
+                self.error_counts.pop(oldest_key, None)
             
             self.last_logged[msg_key] = now
             return True
