@@ -4,6 +4,7 @@ Simplified Trading Instrument Service for NSE and MCX instruments
 """
 
 import asyncio
+import gc
 import gzip
 import json
 import logging
@@ -28,9 +29,6 @@ try:
 except ImportError:
     redis = None
     REDIS_AVAILABLE = False
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 # Configuration constants
@@ -125,16 +123,14 @@ class OptimizedCache:
 
     async def setex(self, key: str, ttl: int, value: str):
         async with self._get_lock():
+            self._cleanup_expired()
             self._data[key] = value
             self._expiry[key] = time.time() + ttl
 
     async def get(self, key: str) -> Optional[str]:
         async with self._get_lock():
+            self._cleanup_expired()
             if key in self._data:
-                if key in self._expiry and time.time() > self._expiry[key]:
-                    del self._data[key]
-                    del self._expiry[key]
-                    return None
                 return self._data[key]
             return None
 
@@ -359,6 +355,7 @@ class TradingInstrumentService:
 
                 # Clear the large array from memory
                 del all_instruments
+                gc.collect()
 
         except Exception as e:
             logger.error(f"❌ Failed to decompress/parse data: {e}")
@@ -367,6 +364,7 @@ class TradingInstrumentService:
             raise
         finally:
             del content
+            gc.collect()
 
         # Write filtered data efficiently
         self.data_dir.mkdir(exist_ok=True)
@@ -427,6 +425,8 @@ class TradingInstrumentService:
 
         result_instruments = mcx_current_expiry.to_dict("records")
         logger.info(f"🏭 Extracted {len(result_instruments)} MCX instruments")
+        del df, mcx_df, mcx_current_expiry
+        gc.collect()
         return result_instruments
 
     async def _save_mcx_instruments(self, mcx_instruments: List[Dict]) -> None:
@@ -516,7 +516,8 @@ class TradingInstrumentService:
         logger.info(
             f"📋 Sample keys: {instrument_keys[:5] if instrument_keys else 'None'}"
         )
-
+        del df, nse_eq_df, unique_stocks_df
+        gc.collect()
         return instrument_keys, instrument_mappings
 
     async def _save_nse_instrument_keys(

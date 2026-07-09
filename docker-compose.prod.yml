@@ -16,6 +16,14 @@ services:
       - redis
     networks:
       - trading-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.50'
+          memory: 8192M
+        reservations:
+          cpus: '0.25'
+          memory: 512M
 
   db:
     image: postgres:13-alpine
@@ -28,12 +36,28 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - trading-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.00'
+          memory: 2048M
+        reservations:
+          cpus: '0.10'
+          memory: 256M
 
   redis:
     image: redis:6-alpine
     restart: always
     networks:
       - trading-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.05'
+          memory: 64M
 
 volumes:
   postgres_data:
