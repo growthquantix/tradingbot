@@ -1054,6 +1054,11 @@ ALLOWED_ORIGINS = [
     "https://api.growthquantix.com",
 ]
 
+# Dynamically load extra CORS origins from environment (e.g. your Netlify URL or Oracle Public IP)
+if os.getenv("CORS_ORIGINS"):
+    ALLOWED_ORIGINS.extend([origin.strip() for origin in os.getenv("CORS_ORIGINS").split(",") if origin.strip()])
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
