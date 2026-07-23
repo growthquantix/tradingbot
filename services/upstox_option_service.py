@@ -224,7 +224,8 @@ class UpstoxOptionService:
             return None
 
     def get_option_chain(
-        self, instrument_key: str, expiry_date: str, db: Session
+        self, instrument_key: str, expiry_date: str, db: Session,
+        force_refresh: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
         Get option chain - EXACT Upstox API implementation with pandas optimization.
@@ -240,12 +241,16 @@ class UpstoxOptionService:
             "total_strikes": ...,
             "analytics": {...}
           }
+
+        Args:
+            force_refresh: If True, bypass the 60-second cache and fetch fresh data.
+                           Use for intraday ATM strike refresh when market has moved.
         """
         try:
             cache_key = f"chain_{instrument_key}_{expiry_date}"
 
-            # Check cache (1 minute for live data)
-            if cache_key in self.cache:
+            # Check cache (1 minute for live data) — skipped when force_refresh=True
+            if not force_refresh and cache_key in self.cache:
                 cached_data, timestamp = self.cache[cache_key]
                 if datetime.now() - timestamp < timedelta(seconds=60):
                     return cached_data
@@ -434,34 +439,63 @@ class UpstoxOptionService:
             return None
 
     def get_atm_keys(
-        self, instrument_key: str, expiry_date: str, db: Session
+        self, instrument_key: str, expiry_date: str, db: Session,
+        force_refresh: bool = False
     ) -> Optional[Dict[str, Any]]:
         """
-        Helper method to specifically get ATM CE and PE keys.
-        Returns: {"ce_key": str, "pe_key": str, "atm_strike": float, "lot_size": int}
+        Get current ATM CE and PE keys with live premiums.
+
+        Args:
+            force_refresh: If True, bypasses the option-chain cache and fetches
+                           fresh data from Upstox. Use at BUY-signal time to get
+                           the true current ATM, not the 9 AM cached value.
+
+        Returns:
+            {
+                "ce_key": str,
+                "pe_key": str,
+                "atm_strike": float,
+                "lot_size": int,
+                "ce_premium": float,   # live LTP of ATM CE (from chain data)
+                "pe_premium": float,   # live LTP of ATM PE (from chain data)
+                "spot_price": float,   # underlying spot price from Upstox
+            }
         """
         try:
-            chain_data = self.get_option_chain(instrument_key, expiry_date, db)
+            chain_data = self.get_option_chain(
+                instrument_key, expiry_date, db, force_refresh=force_refresh
+            )
             if not chain_data or not chain_data.get("data"):
                 return None
 
             atm_strike = chain_data.get("atm_strike")
+            spot_price = chain_data.get("spot_price", 0.0)
             if not atm_strike:
                 return None
 
             ce_key = None
             pe_key = None
+            ce_premium = 0.0
+            pe_premium = 0.0
 
-            # Find the specific strike in the chain data
+            # Find the specific ATM strike in the chain data
             for item in chain_data["data"]:
                 if float(item.get("strike_price", 0)) == atm_strike:
                     if "call_options" in item and item["call_options"]:
                         ce_key = item["call_options"].get("instrument_key")
+                        # Live CE premium comes directly from the chain response
+                        ce_premium = float(
+                            item["call_options"].get("market_data", {}).get("ltp", 0) or 0
+                        )
                     if "put_options" in item and item["put_options"]:
                         pe_key = item["put_options"].get("instrument_key")
+                        # Live PE premium comes directly from the chain response
+                        pe_premium = float(
+                            item["put_options"].get("market_data", {}).get("ltp", 0) or 0
+                        )
                     break
 
-            # Fallback: if exact match not found (due to floating point), find nearest
+            # Fallback: floating-point miss — pick nearest strike
             if not ce_key or not pe_key:
                 closest_item = min(
                     chain_data["data"],
@@ -469,10 +503,16 @@ class UpstoxOptionService:
                 )
                 if "call_options" in closest_item and closest_item["call_options"]:
                     ce_key = closest_item["call_options"].get("instrument_key")
+                    ce_premium = float(
+                        closest_item["call_options"].get("market_data", {}).get("ltp", 0) or 0
+                    )
                 if "put_options" in closest_item and closest_item["put_options"]:
                     pe_key = closest_item["put_options"].get("instrument_key")
+                    pe_premium = float(
+                        closest_item["put_options"].get("market_data", {}).get("ltp", 0) or 0
+                    )
 
-            # Get lot size from contracts
+            # Get lot size from contracts (contracts cache is 5 min — acceptable)
             contracts = self.get_option_contracts(instrument_key, db, expiry_date)
             lot_size = 0
             if contracts:
@@ -480,11 +520,20 @@ class UpstoxOptionService:
                     contracts[0].get("lot_size") or contracts[0].get("minimum_lot", 0)
                 )
 
+            logger.info(
+                f"ATM keys for {instrument_key}: strike={atm_strike}, "
+                f"spot={spot_price:.2f}, CE={ce_key} @{ce_premium:.2f}, "
+                f"PE={pe_key} @{pe_premium:.2f} (force_refresh={force_refresh})"
+            )
+
             return {
                 "ce_key": ce_key,
                 "pe_key": pe_key,
                 "atm_strike": atm_strike,
                 "lot_size": lot_size,
+                "ce_premium": ce_premium,
+                "pe_premium": pe_premium,
+                "spot_price": spot_price,
             }
         except Exception as e:
             logger.error(f"Error in get_atm_keys: {e}")

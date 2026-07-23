@@ -91,6 +91,9 @@ class SharedInstrument:
     # Upstox full-feed sends the current open candle on EVERY tick — without this guard,
     # the same 1-minute candle gets appended 30-50 times per minute, corrupting EMA/SuperTrend.
     last_candle_timestamp: Optional[str] = None
+    # ATM REFRESH: Tracks when ATM strike was last re-fetched from Upstox.
+    # Prevents excessive option chain API calls during volatile markets.
+    last_atm_refresh_time: Optional[datetime] = None
 
 
 class SharedInstrumentRegistry:
@@ -292,6 +295,66 @@ class SharedInstrumentRegistry:
             User metadata dict
         """
         return self.user_metadata.get(user_id, {})
+
+    def refresh_instrument_atm(
+        self,
+        old_option_key: str,
+        new_option_key: str,
+        new_strike: Decimal,
+        new_lot_size: int,
+    ) -> Optional["SharedInstrument"]:
+        """
+        Swap an instrument's option key in-place to reflect the current ATM strike.
+        Transfers all user subscriptions from the old key to the new key atomically.
+
+        Called when the live spot price has moved far enough from the registered
+        strike that a fresher ATM option should be used for new entries.
+
+        Args:
+            old_option_key: Current (stale) option instrument key
+            new_option_key: New (current ATM) option instrument key
+            new_strike:     New ATM strike price
+            new_lot_size:   Lot size for the new option (may change on roll)
+
+        Returns:
+            Updated SharedInstrument, or None if old_option_key not found
+        """
+        instrument = self.instruments.get(old_option_key)
+        if not instrument:
+            logger.warning(
+                f"refresh_instrument_atm: old key '{old_option_key}' not in registry"
+            )
+            return None
+
+        if old_option_key == new_option_key:
+            return instrument  # No change needed
+
+        # Transfer subscriber set from old key → new key
+        old_subscribers = self.instrument_subscribers.pop(old_option_key, set())
+        self.instrument_subscribers[new_option_key] = old_subscribers
+
+        # Update every user's subscription set
+        for uid in old_subscribers:
+            if uid in self.user_subscriptions:
+                self.user_subscriptions[uid].discard(old_option_key)
+                self.user_subscriptions[uid].add(new_option_key)
+
+        # Remove old registry entry and re-insert under new key
+        del self.instruments[old_option_key]
+        instrument.option_instrument_key = new_option_key
+        instrument.strike_price = new_strike
+        instrument.lot_size = new_lot_size
+        instrument.live_option_premium = Decimal("0")   # reset; WS will fill it
+        instrument.last_atm_refresh_time = datetime.now()
+        self.instruments[new_option_key] = instrument
+
+        logger.info(
+            f"ATM swap [{instrument.stock_symbol} {instrument.option_type}]: "
+            f"strike {instrument.strike_price} key {old_option_key} → "
+            f"strike {new_strike} key {new_option_key} "
+            f"({len(old_subscribers)} subscribers transferred)"
+        )
+        return instrument
 
     def update_spot_price(
         self,

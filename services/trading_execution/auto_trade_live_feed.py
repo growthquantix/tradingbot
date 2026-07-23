@@ -1003,6 +1003,20 @@ class AutoTradeLiveFeed:
                     if current_candle_count > instrument.last_processed_candle_count:
                         instrument.last_processed_candle_count = current_candle_count
                         if current_candle_count >= 30:
+                            # REAL-TIME ATM CHECK: Before running strategy, verify that
+                            # the registered option strike is still the ATM. If spot has
+                            # moved significantly, refresh to the current ATM strike so
+                            # entries use maximum-delta options, not stale OTM options.
+                            was_refreshed = await self._refresh_atm_if_drifted(instrument)
+                            if was_refreshed:
+                                # ATM changed — WebSocket re-subscribed to new key.
+                                # Skip strategy this cycle; wait for live data on new strike.
+                                logger.info(
+                                    f"Skipping strategy for {instrument.stock_symbol} "
+                                    f"[{instrument.option_type}] — ATM refreshed, "
+                                    f"waiting for fresh premium data on new strike"
+                                )
+                                continue
                             await self._run_strategy_and_broadcast(instrument)
 
         except Exception:
@@ -1399,6 +1413,154 @@ class AutoTradeLiveFeed:
         except Exception as e:
             logger.exception(f"Signal validation error: {e}")
             return False
+
+    # ============================================================================
+    # REAL-TIME ATM STRIKE REFRESH
+    # ============================================================================
+
+    @staticmethod
+    def _detect_strike_interval(strike: float) -> int:
+        """
+        Infer the strike step size (interval between consecutive strikes) from the
+        underlying's price level. Used as the reference unit for ATM drift detection.
+
+        Heuristic ladder:
+          >= 30 000 → 100  (BANKNIFTY)
+          >= 10 000 → 50   (NIFTY 50)
+          >= 2 000  → 50   (FINNIFTY, mid-cap indices)
+          >= 500    → 10   (large-cap stocks: RELIANCE, TCS …)
+          default   → 5    (small-cap / low-price stocks)
+        """
+        if strike >= 30_000:
+            return 100
+        if strike >= 10_000:
+            return 50
+        if strike >= 2_000:
+            return 50
+        if strike >= 500:
+            return 10
+        return 5
+
+    async def _refresh_atm_if_drifted(self, instrument: SharedInstrument) -> bool:
+        """
+        Check whether the live spot price has drifted away from the registered ATM
+        strike. If drift exceeds 0.75 × strike_interval, fetch the current ATM from
+        Upstox (force_refresh=True to bypass cache), update the registry, and
+        re-subscribe the WebSocket to the new option key.
+
+        Throttled to at most once every 5 minutes per instrument to avoid hammering
+        the Upstox option-chain REST endpoint.
+
+        Returns:
+            True  — instrument was updated; caller should SKIP strategy this cycle
+                    and wait for live data on the new strike key.
+            False — no change; caller should proceed normally.
+        """
+        current_spot = float(instrument.live_spot_price)
+        registered_strike = float(instrument.strike_price)
+
+        if registered_strike <= 0 or current_spot <= 0:
+            return False
+
+        # ── Drift check ───────────────────────────────────────────────────────────
+        interval = self._detect_strike_interval(registered_strike)
+        drift = abs(current_spot - registered_strike)
+
+        if drift < 0.75 * interval:
+            return False  # Within tolerance — no refresh needed
+
+        # ── Throttle: at most once per 5 minutes per instrument ──────────────────
+        if instrument.last_atm_refresh_time is not None:
+            elapsed = (datetime.now() - instrument.last_atm_refresh_time).total_seconds()
+            if elapsed < 300:   # 5 minutes
+                logger.debug(
+                    f"ATM refresh throttled for {instrument.stock_symbol} "
+                    f"[{instrument.option_type}] — last refresh {elapsed:.0f}s ago"
+                )
+                return False
+
+        logger.info(
+            f"🔄 ATM DRIFT: {instrument.stock_symbol} [{instrument.option_type}] "
+            f"spot={current_spot:.2f}  strike={registered_strike:.2f}  "
+            f"drift={drift:.1f}pts ({drift / interval:.2f}× interval) — refreshing"
+        )
+
+        # ── Fetch current ATM from Upstox (bypasses 60-second cache) ─────────────
+        try:
+            from services.upstox_option_service import upstox_option_service
+
+            db = SessionLocal()
+            atm_data = await asyncio.to_thread(
+                upstox_option_service.get_atm_keys,
+                instrument.spot_instrument_key,
+                instrument.expiry_date,
+                db,
+                True,   # force_refresh=True → bypass cache, get live ATM
+            )
+            db.close()
+        except Exception as exc:
+            logger.error(
+                f"ATM refresh API call failed for {instrument.stock_symbol}: {exc}"
+            )
+            return False
+
+        if not atm_data or not atm_data.get("ce_key") or not atm_data.get("pe_key"):
+            logger.warning(
+                f"ATM refresh returned incomplete data for {instrument.stock_symbol}"
+            )
+            return False
+
+        new_strike = atm_data["atm_strike"]
+        new_lot_size = int(atm_data["lot_size"]) or instrument.lot_size
+        new_option_key = (
+            atm_data["ce_key"] if instrument.option_type == "CE" else atm_data["pe_key"]
+        )
+        new_premium = (
+            atm_data["ce_premium"] if instrument.option_type == "CE" else atm_data["pe_premium"]
+        )
+        old_option_key = instrument.option_instrument_key
+
+        if new_option_key == old_option_key:
+            # Same key — just stamp the refresh time and carry on
+            instrument.last_atm_refresh_time = datetime.now()
+            logger.info(
+                f"ATM confirmed unchanged for {instrument.stock_symbol} "
+                f"[{instrument.option_type}] at strike {new_strike}"
+            )
+            return False
+
+        # ── Swap registry entry (old key → new key, transfer subscriptions) ───────
+        updated = shared_registry.refresh_instrument_atm(
+            old_option_key=old_option_key,
+            new_option_key=new_option_key,
+            new_strike=Decimal(str(new_strike)),
+            new_lot_size=new_lot_size,
+        )
+
+        if not updated:
+            return False
+
+        # Seed the new instrument with the premium we got from the chain response
+        # (avoids a cold-start cycle where live_option_premium == 0)
+        if new_premium > 0:
+            updated.live_option_premium = Decimal(str(new_premium))
+
+        logger.info(
+            f"✅ ATM REFRESHED: {instrument.stock_symbol} [{instrument.option_type}] "
+            f"strike {registered_strike} → {new_strike}  "
+            f"premium seeded @ {new_premium:.2f}"
+        )
+
+        # ── Re-subscribe WebSocket to include the new option key ──────────────────
+        if self.upstox_client:
+            all_keys = shared_registry.get_all_instrument_keys()
+            asyncio.create_task(self.upstox_client.update_subscriptions(all_keys))
+            logger.info(
+                f"WebSocket re-subscribed: {len(all_keys)} keys after ATM refresh "
+                f"for {instrument.stock_symbol}"
+            )
+
+        return True   # Signal the caller to skip strategy this cycle
 
     # ============================================================================
     # TRADE EXECUTION (USER-SPECIFIC LAYER)
