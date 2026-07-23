@@ -276,7 +276,8 @@ class StrategyEngine:
         self,
         current_price: Decimal,
         historical_data: Dict[str, List[float]],
-        option_type: str = "CE"
+        option_type: str = "CE",
+        symbol: str = "Unknown"   # ISSUE-C FIX: pass stock name for readable logs
     ) -> TradingSignal:
         """
         Generate trading signal based on SuperTrend + EMA strategy
@@ -455,7 +456,8 @@ class StrategyEngine:
                 "supertrend_2x_value": float(current_supertrend_2x),
                 "multiplier_1x": self.supertrend_multiplier_1x,
                 "multiplier_2x": self.supertrend_multiplier_2x,
-                "trailing_distance_percent": 2.0  # 2% trailing for percentage-based
+                # ISSUE-D FIX: Updated from 2.0 to 5.0 to match pnl_tracker's actual trailing %
+                "trailing_distance_percent": 5.0
             }
 
             # Indicator values
@@ -487,7 +489,7 @@ class StrategyEngine:
             
             # Structured logging
             log_signal_generation(
-                symbol="Unknown",  # Strategy engine doesn't know symbol, passed in auto_trade
+                symbol=symbol,  # ISSUE-C FIX: Now uses actual stock symbol from instrument
                 signal_type=signal_type.value,
                 confidence=float(confidence),
                 strategy="SuperTrend+EMA",

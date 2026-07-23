@@ -1110,6 +1110,7 @@ class AutoTradeLiveFeed:
                 current_price=instrument.live_spot_price,
                 historical_data=instrument.historical_spot_data,
                 option_type=instrument.option_type,
+                symbol=instrument.stock_symbol,   # ISSUE-C FIX: readable signal logs
             )
 
             # STEP 2: Convert SPOT signal to PREMIUM signal (for actual trading)
