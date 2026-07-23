@@ -97,7 +97,9 @@ class StrategyEngine:
         self.lock_profit_percent = Decimal('0.80')  # Lock 80% of profit
 
         # Stop Loss Buffer - Prevent tight stops
-        self.sl_buffer_percent = Decimal('0.03')  # 3% buffer below SuperTrend for SL (was 5%)
+        # BUG-01 FIX: Increased from 3% to 8% — FNO option premiums move 5-10% on normal ticks.
+        # A 3% minimum SL was getting hit by market noise before the strategy had a chance to work.
+        self.sl_buffer_percent = Decimal('0.08')  # 8% minimum SL buffer for option premiums
 
         logger.info("Strategy Engine initialized with SuperTrend + EMA")
         logger.info(f"  EMA Period: {self.ema_period}")
@@ -716,7 +718,9 @@ class StrategyEngine:
 
                 elif trailing_type == TrailingStopType.PERCENTAGE:
                     # Percentage-based trailing
-                    trailing_percent = Decimal('0.02')  # 2% trailing
+                    # BUG-11 FIX: Increased from 2% to 5% — options move 3-5% in a single tick during
+                    # high volatility. A 2% trailing stop was exiting on pure noise, not real reversals.
+                    trailing_percent = Decimal('0.05')  # 5% trailing
 
                     if position_type == "LONG":
                         # Trail below current price by 2%

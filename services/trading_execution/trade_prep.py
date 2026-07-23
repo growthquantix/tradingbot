@@ -284,7 +284,9 @@ class TradePrepService:
                 .count()
             )
 
-            MAX_CONCURRENT_POSITIONS = 10
+            # BUG-13 FIX: Aligned with capital_manager.py (was 10, now 5).
+            # Both gatekeepers must use the same limit so error messages are accurate.
+            MAX_CONCURRENT_POSITIONS = 5
             if active_position_count >= MAX_CONCURRENT_POSITIONS:
                 logger.warning(
                     f"User {user_id} has {active_position_count} active positions "
@@ -409,41 +411,12 @@ class TradePrepService:
                     failure_reason="INSUFFICIENT_FUNDS_FOR_LOT"
                 )
 
-            # STEP 5: Validate sufficient capital
-            capital_validation = capital_manager.validate_capital_availability(
-                user_id, capital_allocation.allocated_capital, db, trading_mode
-            )
-
-            if not capital_validation.get("valid"):
-                available = capital_validation.get("available_capital", 0)
-                needed = capital_validation.get("required_capital", 0)
-                shortfall = capital_validation.get("shortfall", 0)
-                
-                error_msg = f"Insufficient capital. Need: ₹{needed:,.2f}, Available: ₹{available:,.2f} (Shortfall: ₹{shortfall:,.2f})"
-                logger.warning(f"User {user_id} blocked: {error_msg}")
-                
-                # Notify User specifically for Low Balance
-                from services.notifications.alert_manager import alert_manager
-                self._safe_dispatch(alert_manager.notify_low_balance(
-                    user_id=user_id,
-                    symbol=stock_symbol,
-                    reason=error_msg
-                ))
-                
-                return self._create_error_trade(
-                    TradeStatus.INSUFFICIENT_CAPITAL,
-                    user_id,
-                    stock_symbol,
-                    option_instrument_key,
-                    option_type,
-                    strike_price,
-                    expiry_date,
-                    lot_size,
-                    trading_mode,
-                    error_msg,
-                    failure_stage="capital",
-                    failure_reason="INSUFFICIENT_FUNDS"
-                )
+            # STEP 5: Capital validation is already done inside calculate_position_size (Step 4).
+            # BUG-14 FIX: Removed redundant validate_capital_availability call here.
+            # That call fetched available_capital again from DB (20ms+ roundtrip) and could
+            # fail in a TOCTOU race if another user allocated capital between Step 4 and here.
+            # The real guard against insufficient funds is fund_manager.block_margin() at
+            # execution time, which atomically checks and blocks in one DB transaction.
 
             # STEP 6: Validate option quality using Greeks and market data
             if option_greeks and implied_volatility:
@@ -490,18 +463,21 @@ class TradePrepService:
                         failure_reason="OPTION_QUALITY_CHECK_FAILED"
                     )
 
-            # STEP 7: Calculate risk-reward ratio (now in premium terms)
+            # STEP 7: Extract risk-reward ratio for reference and logging
+            # BUG-02 FIX: Previously this step overrode the strategy engine's target_price with
+            # a hardcoded ₹2 charges_buffer on top of (risk * rr_ratio). This distorted the R:R
+            # on cheap options (e.g. a ₹30 premium with ₹0.9 risk got a ₹3.8 target instead of ₹1.8)
+            # and caused positions to overstay until a larger target was hit, giving back gains.
+            # The strategy engine's convert_spot_signal_to_premium() already computes a correct target.
+            # We trust that value here instead of recalculating.
             risk = abs(premium_signal.entry_price - premium_signal.stop_loss)
             rr_ratio = Decimal(str(premium_signal.trailing_stop_config.get('risk_reward_ratio') or 2.0))
-            
-            # REQUIREMENT: Target must guarantee POSITIVE NET PnL
-            # Adding a 2.0 point buffer to cover standard brokerage (40 INR) and taxes
-            charges_buffer = Decimal('2.0')
-            target_price = premium_signal.entry_price + (risk * rr_ratio) + charges_buffer
-            
-            # Update signal with correct target
-            premium_signal.target_price = target_price
             risk_reward_ratio = rr_ratio
+            # target_price is already set correctly by strategy_engine.convert_spot_signal_to_premium()
+            logger.info(
+                f"Trade target (from strategy): ₹{premium_signal.target_price:.2f} "
+                f"(R:R {rr_ratio:.1f}, Risk: ₹{risk:.2f})"
+            )
 
             # Step 9: Create prepared trade (with premium-based signal)
             prepared_trade = PreparedTrade(

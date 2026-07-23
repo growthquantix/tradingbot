@@ -709,7 +709,10 @@ class RealTimePnLTracker:
                 return True, "TARGET_HIT"
 
             # Check time-based exit (e.g., close before market close)
-            current_time = datetime.now().time()
+            # BUG-03 FIX: Use get_ist_now_naive() instead of datetime.now().
+            # On Railway/Oracle Cloud (UTC servers), datetime.now() returns UTC time.
+            # Comparing UTC 15:20 against IST 15:20 market close causes exits at wrong time.
+            current_time = get_ist_now_naive().time()
             if current_time.hour >= 15 and current_time.minute >= 20:
                 return True, "TIME_BASED_EXIT"
 
@@ -946,7 +949,13 @@ class RealTimePnLTracker:
                         "realized_rr": float(realized_rr),
                         "time_in_trade_min": float(time_in_trade_mins),
                         "exit_reason": reason,
-                        "slippage_exit": float(price) - float(price),
+                        # BUG-12 FIX: Was `float(price) - float(price)` which is always 0.
+                        # Slippage is the difference between raw exit price and post-slippage price.
+                        "slippage_exit": (
+                            float(raw_exit_price) - float(exit_price)
+                            if trade_execution.trading_mode == "paper"
+                            else 0.0
+                        ),
                         "diagnostic_check": (
                             "PASSED" if time_in_trade_mins > 0 else "FAILED_DATA"
                         ),

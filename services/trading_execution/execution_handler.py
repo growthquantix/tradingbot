@@ -663,17 +663,53 @@ class TradeExecutionHandler:
         position.last_updated = get_ist_now_naive()
         
         # Update Paper Account (DB)
+        # BUG-08 FIX: The previous code did:
+        #   available_margin += release   (release = sell_val - charges = investment + net_pnl)
+        #   current_balance  += release   ← WRONG: adds full investment+profit to balance
+        #   used_margin      -= total_inv
+        #
+        # The correct accounting:
+        #   available_margin += total_inv + net_pnl  (release investment + realised profit/loss)
+        #   current_balance  += net_pnl              (only the profit/loss changes the balance)
+        #   used_margin      -= total_inv            (unblock the margin that was locked)
         from database.models import PaperTradingAccount
         paper_acc = db.query(PaperTradingAccount).filter(PaperTradingAccount.user_id == position.user_id).first()
         if paper_acc:
-            release = float(sell_val - brokerage - taxes)
-            paper_acc.available_margin += release
-            paper_acc.current_balance += release
-            paper_acc.used_margin -= float(total_inv)
+            paper_acc.available_margin += float(total_inv) + float(net_pnl)
+            paper_acc.current_balance += float(net_pnl)
+            paper_acc.used_margin = max(0.0, paper_acc.used_margin - float(total_inv))
             paper_acc.total_pnl += float(net_pnl)
-            paper_acc.positions_count = max(0, paper_acc.positions_count - 1)
-        
+            if hasattr(paper_acc, 'positions_count') and paper_acc.positions_count is not None:
+                paper_acc.positions_count = max(0, paper_acc.positions_count - 1)
+
+        # Sync in-memory paper account service if it exists
+        from services.paper_trading_account import paper_trading_service
+        mem_acc = paper_trading_service.accounts.get(position.user_id)
+        if mem_acc and paper_acc:
+            mem_acc.available_margin = float(paper_acc.available_margin)
+            mem_acc.used_margin = float(paper_acc.used_margin)
+            mem_acc.current_balance = float(paper_acc.current_balance)
+            mem_acc.total_pnl = float(paper_acc.total_pnl)
+
+        # Add ledger entry via fund_manager for statement accuracy
+        # Previously emergency exit skipped this, causing the fund statement to be inconsistent.
+        try:
+            from services.trading_execution.fund_manager import fund_manager
+            fund_manager.release_margin_and_settle(
+                user_id=position.user_id,
+                trading_mode="paper",
+                reference_id=trade.trade_id,
+                invested_amount=float(total_inv),
+                gross_pnl=float(gross_pnl),
+                brokerage=float(brokerage),
+                taxes=float(taxes),
+                db=db,
+            )
+        except Exception as ledger_err:
+            logger.warning(f"Could not write ledger entry for emergency exit {trade.trade_id}: {ledger_err}")
+
         db.commit()
+
 
     def _place_broker_order(
         self, broker_config: BrokerConfig, prepared_trade: PreparedTrade, db: Session

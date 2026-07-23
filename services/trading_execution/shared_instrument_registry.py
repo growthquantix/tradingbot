@@ -87,6 +87,10 @@ class SharedInstrument:
     last_signal: Optional[Any] = None
     last_update_time: datetime = field(default_factory=datetime.now)
     last_processed_candle_count: int = 0
+    # BUG-05 FIX: Track the last candle timestamp to avoid appending duplicate candles.
+    # Upstox full-feed sends the current open candle on EVERY tick — without this guard,
+    # the same 1-minute candle gets appended 30-50 times per minute, corrupting EMA/SuperTrend.
+    last_candle_timestamp: Optional[str] = None
 
 
 class SharedInstrumentRegistry:
@@ -312,6 +316,17 @@ class SharedInstrumentRegistry:
                 if ohlc_data:
                     for candle in ohlc_data:
                         if candle.get("interval") == "I1":
+                            # BUG-05 FIX: Only append a candle when its timestamp changes (new minute).
+                            # The Upstox live feed sends the same open candle on every tick with
+                            # updated values — without this guard we get 30-50 duplicate candles
+                            # per minute, which completely corrupts EMA and SuperTrend calculations.
+                            candle_ts = str(
+                                candle.get("ts", candle.get("timestamp", ""))
+                            )
+                            if candle_ts and candle_ts == instrument.last_candle_timestamp:
+                                break  # Same candle — skip duplicate
+                            instrument.last_candle_timestamp = candle_ts
+
                             instrument.historical_spot_data["open"].append(
                                 float(candle.get("open", price))
                             )

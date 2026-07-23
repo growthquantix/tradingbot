@@ -169,14 +169,24 @@ class TradingCapitalManager:
             balances = fund_manager.get_balances(user_id, db, trading_mode.value)
             total_capital = Decimal(str(balances.get("available_margin", 0)))
 
-            # Check concurrent position limit
+            # BUG-13 FIX: Unified MAX_CONCURRENT_POSITIONS constant.
+            # Previously capital_manager used 5 and trade_prep used 10.
+            # When users had 6-9 positions, capital_manager returned 0 capital but
+            # trade_prep's check didn't block — resulting in misleading 'INSUFFICIENT_CAPITAL'
+            # error messages when the real reason was 'MAX_POSITIONS_REACHED'.
             active_positions_count = db.query(ActivePosition).filter(
                 ActivePosition.user_id == user_id,
                 ActivePosition.is_active == True
             ).count()
 
-            if active_positions_count >= 5: # MAX_CONCURRENT_POSITIONS
+            MAX_CONCURRENT_POSITIONS = 5
+            if active_positions_count >= MAX_CONCURRENT_POSITIONS:
+                logger.info(
+                    f"User {user_id} has {active_positions_count}/{MAX_CONCURRENT_POSITIONS} "
+                    "positions — returning 0 capital to block new entries"
+                )
                 return Decimal('0')
+
 
             # FIX 5: Health tracking
             self._update_function_health("available_capital", "success")

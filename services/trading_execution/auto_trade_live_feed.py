@@ -711,7 +711,30 @@ class AutoTradeLiveFeed:
                         )
                     
                     # Ensure the user remains subscribed to this instrument in the shared registry
-                    shared_registry.subscribe_user(pos.user_id, pos.instrument_key)
+                    # BUG-09 FIX: subscribe_user requires broker_name and broker_config_id.
+                    # Previously called without these args, causing TypeError silently caught,
+                    # leaving recovered positions with no broker metadata and exits skipped.
+                    try:
+                        broker_meta = shared_registry.get_user_metadata(pos.user_id)
+                        b_name = broker_meta.get("broker_name", "paper")
+                        b_cfg_id = broker_meta.get("broker_config_id", None)
+                        if b_cfg_id is None:
+                            # Fetch from DB as fallback
+                            from database.models import BrokerConfig
+                            bc = db_session.query(BrokerConfig).filter(
+                                BrokerConfig.user_id == pos.user_id,
+                                BrokerConfig.is_active == True
+                            ).first()
+                            if bc:
+                                b_name = bc.broker_name
+                                b_cfg_id = bc.id
+                        shared_registry.subscribe_user(
+                            pos.user_id, pos.instrument_key, b_name, b_cfg_id or 0
+                        )
+                    except Exception as sub_err:
+                        logger.warning(
+                            f"Could not subscribe user {pos.user_id} to {pos.instrument_key}: {sub_err}"
+                        )
                 
                 db_session.close()
 
@@ -1518,9 +1541,51 @@ class AutoTradeLiveFeed:
 
             # CRITICAL: Handle ENTRY vs EXIT signals differently
             if signal.signal_type in (SignalType.EXIT_LONG, SignalType.EXIT_SHORT):
-                logger.debug(
-                    f"Ignoring EXIT signal for {instrument.stock_symbol} - exits handled by pnl_tracker"
+                # BUG-06 FIX: EXIT signals from SuperTrend reversal were previously silently dropped.
+                # pnl_tracker handles exits via SL/target/time, but it only runs every 1 second and
+                # waits for the hard SL. When the strategy sees a trend reversal, we should fast-exit
+                # any active position for this user+symbol rather than waiting for the trailing SL
+                # to slowly decay — costing extra premium to theta and delta loss.
+                logger.info(
+                    f"🔴 Strategy EXIT signal for {instrument.stock_symbol} (user {user_id}) — "
+                    f"checking for active positions to close early"
                 )
+                active_pos = (
+                    db.query(ActivePosition)
+                    .join(
+                        AutoTradeExecution,
+                        ActivePosition.trade_execution_id == AutoTradeExecution.id,
+                    )
+                    .filter(
+                        AutoTradeExecution.user_id == user_id,
+                        AutoTradeExecution.symbol == instrument.stock_symbol,
+                        ActivePosition.is_active == True,
+                    )
+                    .first()
+                )
+                if active_pos:
+                    # Accelerate exit: mark position for immediate close by pnl_tracker.
+                    # We do this by setting current_stop_loss above the current price,
+                    # which causes pnl_tracker to detect SL_HIT on its very next 1s cycle.
+                    exit_price = instrument.live_option_premium
+                    if exit_price > 0:
+                        logger.info(
+                            f"⏹️ Fast-exit triggered for {instrument.stock_symbol} position "
+                            f"(id={active_pos.id}) at premium ₹{exit_price:.2f} — strategy reversal"
+                        )
+                        # Set SL just above current price to force next tracker cycle to exit
+                        active_pos.current_stop_loss = float(exit_price) + 0.01
+                        active_pos.last_updated = get_ist_now_naive()
+                        db.commit()
+                    else:
+                        logger.warning(
+                            f"EXIT signal for {instrument.stock_symbol} but premium is 0, "
+                            "cannot fast-exit — pnl_tracker will handle via trailing SL"
+                        )
+                else:
+                    logger.debug(
+                        f"EXIT signal for {instrument.stock_symbol} but no active position for user {user_id}"
+                    )
                 return
             else:
                 # ENTRY signal (BUY/SELL): Only process if no position exists
