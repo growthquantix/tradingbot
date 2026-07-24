@@ -67,8 +67,6 @@ const AutoTradingPage = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
-  const [riskPerTrade, setRiskPerTrade] = useState(1.5);
-  const [maxLotsCap, setMaxLotsCap] = useState(2);
   const [chartModalSymbol, setChartModalSymbol] = useState(null);
 
   const [capitalData, setCapitalData] = useState({
