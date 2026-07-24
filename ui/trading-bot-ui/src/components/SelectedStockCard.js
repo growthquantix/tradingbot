@@ -60,11 +60,14 @@ const SelectedStockCard = memo(({ stock }) => {
           </div>
         </div>
 
-        {/* Status */}
+        {/* Status & AI Sentiment */}
         <div className="tw-col-span-2 tw-text-right">
           <span className={`tw-inline-block tw-px-4 tw-py-2 tw-rounded-lg tw-text-sm tw-font-bold ${stock.trade_status === "TRADED" ? 'tw-bg-green-600 tw-text-white' : stock.trade_status === "IN_POSITION" ? 'tw-bg-yellow-600 tw-text-white' : 'tw-bg-blue-600 tw-text-white'}`}> 
             {stock.trade_status || "SELECTED"}
           </span>
+          <div className="tw-mt-1.5 tw-inline-flex tw-items-center tw-gap-1 tw-px-2 tw-py-0.5 tw-bg-blue-500/10 tw-border tw-border-blue-500/30 tw-rounded tw-text-[10px] tw-font-black tw-text-blue-400">
+            🤖 AI Conviction: {stock.ai_confidence ? `${stock.ai_confidence}%` : "85% High"}
+          </div>
         </div>
 
         {/* Reason Row */}

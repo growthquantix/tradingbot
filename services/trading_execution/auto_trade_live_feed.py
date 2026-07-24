@@ -1263,6 +1263,24 @@ class AutoTradeLiveFeed:
             if premium_signal.signal_type == SignalType.HOLD:
                 return
 
+            # 🤖 AI AGENT CONFIDENCE GATING: Verify trade with Native AI Engine (≥75% required)
+            if premium_signal.signal_type in (SignalType.BUY, SignalType.SELL):
+                from services.ai_agent_engine import ai_agent_engine
+                ai_eval = ai_agent_engine.evaluate_trade_entry(
+                    symbol=instrument.stock_symbol,
+                    current_spot_price=float(instrument.live_spot_price),
+                    historical_data=instrument.historical_spot_data,
+                    option_type=instrument.option_type,
+                    greeks=instrument.option_greeks if hasattr(instrument, "option_greeks") else None,
+                    iv=getattr(instrument, "implied_volatility", None),
+                )
+                if not ai_eval.gating_passed:
+                    logger.warning(
+                        f"🛡️ AI AGENT GATING: Filtered trade for {instrument.stock_symbol} [{instrument.option_type}] — "
+                        f"{ai_eval.reason}"
+                    )
+                    return  # Filter out low-confidence false breakout trade
+
             trace_id = generate_trace_id()
 
             log_signal_generation(
