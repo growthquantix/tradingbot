@@ -963,15 +963,25 @@ class AutoTradeLiveFeed:
             feed_data: Feed data
         """
         try:
-            # Extract price data
+            # Extract price data across all Upstox Protobuf structure variants
+            # (marketFF for stock EQ, indexFF for NIFTY/BANKNIFTY spot indices, firstLevelWithGreeks for depth)
             full_feed = feed_data.get("fullFeed", {}) or {}
-            market_ff = full_feed.get("marketFF", {}) or {}
-            ltpc = market_ff.get("ltpc", {}) or {}
+            market_ff = (
+                full_feed.get("marketFF")
+                or full_feed.get("indexFF")
+                or feed_data.get("firstLevelWithGreeks")
+                or {}
+            )
+            ltpc = (
+                market_ff.get("ltpc")
+                or feed_data.get("ltpc")
+                or {}
+            )
             ohlc_data = (
-                (market_ff.get("marketOHLC") or {}).get("ohlc", []) if market_ff else []
+                (market_ff.get("marketOHLC") or feed_data.get("marketOHLC") or {}).get("ohlc", [])
             )
 
-            ltp = ltpc.get("ltp", 0)
+            ltp = ltpc.get("ltp") or feed_data.get("ltp", 0)
             if not ltp or float(ltp) <= 0:
                 return
 
@@ -1113,19 +1123,21 @@ class AutoTradeLiveFeed:
             feed_data: Feed data
         """
         try:
-            # TRY MULTIPLE FEED SOURCES (Upstox sends data in different formats)
+            # TRY MULTIPLE FEED SOURCES (marketFF, firstLevelWithGreeks, direct ltpc)
+            full_feed = feed_data.get("fullFeed", {}) or {}
+            market_ff = (
+                full_feed.get("marketFF")
+                or feed_data.get("firstLevelWithGreeks")
+                or {}
+            )
+
             premium = 0
-            
-            # Source 1: Market Full Feed (detailed)
-            market_ff = feed_data.get("fullFeed", {}).get("marketFF", {})
             if market_ff:
                 premium = market_ff.get("ltpc", {}).get("ltp", 0)
-            
-            # Source 2: Direct LTPC (fast)
+
             if not premium or premium <= 0:
                 premium = feed_data.get("ltpc", {}).get("ltp", 0)
-                
-            # Source 3: Direct LTP (fallback)
+
             if not premium or premium <= 0:
                 premium = feed_data.get("ltp", 0)
 
@@ -1174,13 +1186,23 @@ class AutoTradeLiveFeed:
         return None
 
     def _extract_bid_ask(self, market_ff: Dict, type: str) -> Optional[float]:
-        """Helper to extract bid/ask from feed"""
+        """Helper to extract bid/ask from feed (supports marketLevel and firstDepth)"""
         quotes = market_ff.get("marketLevel", {}).get("bidAskQuote", [])
-        if not quotes: return None
-        try:
-            return float(quotes[0].get("bidP" if type == "bid" else "askP", 0))
-        except:
-            return None
+        if quotes:
+            try:
+                return float(quotes[0].get("bidP" if type == "bid" else "askP", 0))
+            except:
+                pass
+
+        # Support firstDepth (from firstLevelWithGreeks)
+        first_depth = market_ff.get("firstDepth", {})
+        if first_depth:
+            try:
+                return float(first_depth.get("bidP" if type == "bid" else "askP", 0))
+            except:
+                pass
+
+        return None
 
     # ============================================================================
     # STRATEGY EXECUTION (COMMON LAYER - Signal Generation)

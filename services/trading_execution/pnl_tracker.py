@@ -334,8 +334,13 @@ class RealTimePnLTracker:
                                 # For LONG positions: Exit if price rises above Target (Respect HOLD Window)
                                 elif target_price and price_decimal >= target_price:
                                     # REQUIREMENT: No exit allowed for first 3-5 minutes
+                                    entry_dt = (
+                                        trade_execution.entry_time.replace(tzinfo=None)
+                                        if trade_execution.entry_time and trade_execution.entry_time.tzinfo
+                                        else (trade_execution.entry_time or get_ist_now_naive())
+                                    )
                                     holding_duration_min = (
-                                        get_ist_now_naive() - trade_execution.entry_time
+                                        get_ist_now_naive() - entry_dt
                                     ).total_seconds() / 60
                                     if holding_duration_min >= 3:
                                         should_exit = True
@@ -386,6 +391,11 @@ class RealTimePnLTracker:
                             # Prepare Broadcast Data
                             # FIX 3: Guarantee valid SL in UI broadcast (never 0)
                             ui_sl = float(new_sl) if new_sl > 0 else float(current_sl)
+                            entry_dt = (
+                                trade_execution.entry_time.replace(tzinfo=None)
+                                if trade_execution.entry_time and trade_execution.entry_time.tzinfo
+                                else (trade_execution.entry_time or get_ist_now_naive())
+                            )
                             updates.append(
                                 PositionPnL(
                                     position_id=position.id,
@@ -399,13 +409,9 @@ class RealTimePnLTracker:
                                     pnl=pnl_amount,
                                     pnl_percent=pnl_percent,
                                     pnl_points=pnl_points,
-                                    entry_time=trade_execution.entry_time.isoformat(),
+                                    entry_time=entry_dt.isoformat(),
                                     holding_duration_minutes=int(
-                                        (
-                                            get_ist_now_naive()
-                                            - trade_execution.entry_time
-                                        ).total_seconds()
-                                        / 60
+                                        (get_ist_now_naive() - entry_dt).total_seconds() / 60
                                     ),
                                     stop_loss=Decimal(str(ui_sl)),
                                     target=target_price or Decimal("0"),

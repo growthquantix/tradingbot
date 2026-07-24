@@ -298,13 +298,15 @@ class OptionAnalyticsService:
         bid_decimal = Decimal(str(bid_price))
         ask_decimal = Decimal(str(ask_price))
 
-        # Check minimum OI
-        if oi < self.min_open_interest:
+        # Check minimum OI (only reject if explicit low non-zero OI; warn if OI omitted in feed tick)
+        if 0 < oi < self.min_open_interest:
             return {
                 "valid": False,
                 "reason": f"Low open interest ({oi:,.0f}) - Illiquid option, may face high slippage",
                 "metrics": {"oi": oi, "min_required": self.min_open_interest}
             }
+        elif oi == 0:
+            warnings.append("Open interest not present in current feed tick - proceeding with spread check")
 
         # Check volume/OI ratio
         volume_oi_ratio = Decimal(str(volume / oi)) if oi > 0 else Decimal('0')
