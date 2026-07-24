@@ -67,6 +67,9 @@ const AutoTradingPage = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+  const [riskPerTrade, setRiskPerTrade] = useState(1.5);
+  const [maxLotsCap, setMaxLotsCap] = useState(2);
+  const [chartModalSymbol, setChartModalSymbol] = useState(null);
 
   const [capitalData, setCapitalData] = useState({
     total_available_capital: 100000,
@@ -511,7 +514,7 @@ const AutoTradingPage = () => {
                   <Grid container spacing={2}>
                     {selectedStocks.map((stock, idx) => (
                       <Grid item xs={12} md={6} key={stock.symbol || idx}>
-                        <SelectedStockCard stock={stock} />
+                        <SelectedStockCard stock={stock} onOpenChart={(sym) => setChartModalSymbol(sym)} />
                       </Grid>
                     ))}
                   </Grid>
@@ -625,6 +628,43 @@ const AutoTradingPage = () => {
               {emergencyStopLoading ? "Exiting..." : "Yes, Exit All Now"}
             </Button>
           </DialogActions>
+        </Dialog>
+
+        {/* TRADINGVIEW LIVE CHART OVERLAY MODAL */}
+        <Dialog
+          open={Boolean(chartModalSymbol)}
+          onClose={() => setChartModalSymbol(null)}
+          maxWidth="lg"
+          fullWidth
+          PaperProps={{
+            sx: {
+              bgcolor: "#0b0f19",
+              border: "1px solid rgba(255, 255, 255, 0.12)",
+              borderRadius: "16px",
+              height: "80vh",
+            },
+          }}
+        >
+          <DialogTitle sx={{ bgcolor: "#131c2e", color: "#ffffff", fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Activity size={20} color="#3b82f6" />
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                {chartModalSymbol ? `${chartModalSymbol} Live Spot & Strategy Chart` : "Live Chart"}
+              </Typography>
+            </Stack>
+            <Button size="small" onClick={() => setChartModalSymbol(null)} sx={{ color: "#94a3b8" }}>
+              Close ✕
+            </Button>
+          </DialogTitle>
+          <DialogContent sx={{ p: 0, bgcolor: "#0b0f19" }}>
+            {chartModalSymbol && (
+              <iframe
+                title={`${chartModalSymbol} TradingView Chart`}
+                src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=NSE:${chartModalSymbol}&interval=1&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=0b0f19&theme=dark&style=1&timezone=Asia/Kolkata`}
+                style={{ width: "100%", height: "100%", border: "none" }}
+              />
+            )}
+          </DialogContent>
         </Dialog>
       </Container>
     </Box>

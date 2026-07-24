@@ -8,7 +8,7 @@ const formatCurrency = (amount) => {
   return `${amount < 0 ? '-' : ''}₹${formatted}`;
 };
 
-const SelectedStockCard = memo(({ stock }) => {
+const SelectedStockCard = memo(({ stock, onOpenChart }) => {
   const lotsToTrade = stock.position_size_lots || 1;
   const lotSize = stock.lot_size || 0;
   const totalQty = lotsToTrade * lotSize;
@@ -60,14 +60,22 @@ const SelectedStockCard = memo(({ stock }) => {
           </div>
         </div>
 
-        {/* Status & AI Sentiment */}
-        <div className="tw-col-span-2 tw-text-right">
-          <span className={`tw-inline-block tw-px-4 tw-py-2 tw-rounded-lg tw-text-sm tw-font-bold ${stock.trade_status === "TRADED" ? 'tw-bg-green-600 tw-text-white' : stock.trade_status === "IN_POSITION" ? 'tw-bg-yellow-600 tw-text-white' : 'tw-bg-blue-600 tw-text-white'}`}> 
+        {/* Status & AI Sentiment & Chart */}
+        <div className="tw-col-span-2 tw-text-right tw-flex tw-flex-col tw-items-end">
+          <span className={`tw-inline-block tw-px-3 tw-py-1.5 tw-rounded-lg tw-text-xs tw-font-bold ${stock.trade_status === "TRADED" ? 'tw-bg-green-600 tw-text-white' : stock.trade_status === "IN_POSITION" ? 'tw-bg-yellow-600 tw-text-white' : 'tw-bg-blue-600 tw-text-white'}`}> 
             {stock.trade_status || "SELECTED"}
           </span>
-          <div className="tw-mt-1.5 tw-inline-flex tw-items-center tw-gap-1 tw-px-2 tw-py-0.5 tw-bg-blue-500/10 tw-border tw-border-blue-500/30 tw-rounded tw-text-[10px] tw-font-black tw-text-blue-400">
+          <div className="tw-mt-1 tw-inline-flex tw-items-center tw-gap-1 tw-px-2 tw-py-0.5 tw-bg-blue-500/10 tw-border tw-border-blue-500/30 tw-rounded tw-text-[10px] tw-font-black tw-text-blue-400">
             🤖 AI Conviction: {stock.ai_confidence ? `${stock.ai_confidence}%` : "85% High"}
           </div>
+          {onOpenChart && (
+            <button
+              onClick={() => onOpenChart(stock.symbol)}
+              className="tw-mt-1.5 tw-px-2.5 tw-py-1 tw-bg-slate-800 hover:tw-bg-slate-700 tw-border tw-border-slate-700 tw-rounded tw-text-[11px] tw-font-semibold tw-text-cyan-400 tw-transition-colors"
+            >
+              📈 Live Chart
+            </button>
+          )}
         </div>
 
         {/* Reason Row */}
