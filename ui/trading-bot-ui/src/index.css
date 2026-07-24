@@ -17,7 +17,27 @@
   }
 
   .glass-card {
-    @apply tw-bg-slate-800/50 tw-backdrop-blur-sm tw-border tw-border-slate-700;
+    background: rgba(19, 28, 46, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glass-panel {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+  }
+
+  .glow-success {
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);
+  }
+
+  .glow-error {
+    box-shadow: 0 0 15px rgba(244, 63, 94, 0.25);
+  }
+
+  .glow-primary {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
   }
 
   .success-gradient {
@@ -33,61 +53,70 @@
   }
 }
 
-/* Custom scrollbar for Tailwind components */
-.tailwind-scrollbar::-webkit-scrollbar {
+/* Pulse animation for active live indicators */
+@keyframes pulse-green {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.live-pulse-dot {
   width: 8px;
+  height: 8px;
+  background-color: #10b981;
+  border-radius: 50%;
+  animation: pulse-green 2s infinite;
+  display: inline-block;
 }
 
-.tailwind-scrollbar::-webkit-scrollbar-track {
-  background: #1e293b;
+/* Custom scrollbar for Tailwind & MUI components */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.tailwind-scrollbar::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-track {
+  background: #0b0f19;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
   background: #475569;
-  border-radius: 4px;
 }
 
-.tailwind-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
-}
-
-/* Smooth transitions for Tailwind components */
+/* Smooth transitions */
 .tw-transition-all {
   transition-property: all;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+  transition-duration: 200ms;
 }
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  background-color: #0b0f19;
+  color: #f8fafc;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  
-  /* Ensure proper mobile viewport behavior */
   overflow-x: hidden;
-  -webkit-text-size-adjust: 100%;
-  -ms-text-size-adjust: 100%;
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
-/* Ensure all elements use border-box sizing */
 *, *::before, *::after {
   box-sizing: border-box;
 }
 
-/* Improve touch scrolling on mobile */
 html {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Prevent zoom on input focus on iOS */
 @media screen and (max-width: 767px) {
   input[type="text"],
   input[type="email"],
@@ -98,3 +127,4 @@ html {
     font-size: 16px !important;
   }
 }
+

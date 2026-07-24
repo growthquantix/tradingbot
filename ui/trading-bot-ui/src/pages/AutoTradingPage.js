@@ -1,13 +1,57 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  Box,
+  Container,
+  Grid,
+  Paper,
+  Typography,
+  Button,
+  Chip,
+  Stack,
+  Tab,
+  Tabs,
+  LinearProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
+  Card,
+  CardContent,
+} from "@mui/material";
+import {
+  TrendingUp,
+  TrendingDown,
+  Play,
+  Square,
+  Zap,
+  ShieldAlert,
+  Activity,
+  Layers,
+  Clock,
+  Plus,
+} from "lucide-react";
 import api from "../services/api";
-import { Plus } from "lucide-react";
 import ActivePositionCard from "../components/ActivePositionCard";
 import SelectedStockCard from "../components/SelectedStockCard";
 import AddFundsModal from "../components/funds/AddFundsModal";
 
+const formatCurrency = (val) => {
+  const num = parseFloat(val || 0);
+  const formatted = new Intl.NumberFormat("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(num));
+  return `${num < 0 ? "-" : ""}₹${formatted}`;
+};
+
+const formatPercent = (val) => {
+  const num = parseFloat(val || 0);
+  return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
+};
+
 const AutoTradingPage = () => {
   const [tradingMode, setTradingMode] = useState("paper");
-  const [executionMode, setExecutionMode] = useState("multi_demat");
   const [selectedStocks, setSelectedStocks] = useState([]);
   const [activePositions, setActivePositions] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
@@ -17,1128 +61,574 @@ const AutoTradingPage = () => {
     pnl_percent: 0,
     active_positions_count: 0,
   });
-  const [isLoading, setIsLoading] = useState(true);
-  const [stocksLoading, setStocksLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [emergencyStopLoading, setEmergencyStopLoading] = useState(false);
   const [autoTradingRunning, setAutoTradingRunning] = useState(false);
-  const [realtimeStats, setRealtimeStats] = useState({
-    signals_today: 0,
-    trades_today: 0,
-    active_stocks: 0
-  });
-  const socketRef = useRef(null);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [showLiveConfirmation, setShowLiveConfirmation] = useState(false);
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
+
   const [capitalData, setCapitalData] = useState({
-    total_available_capital: 0,
+    total_available_capital: 100000,
     total_used_margin: 0,
-    total_free_margin: 0,
+    total_free_margin: 100000,
     capital_utilization_percent: 0,
-    max_trade_allocation: 0,
-    demats: [],
-    total_demats: 0,
-    active_demats: 0,
     trading_mode: "paper",
   });
 
-  const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [wsConnected, setWsConnected] = useState(false);
-  const [showLiveConfirmation, setShowLiveConfirmation] = useState(false);
-  const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
-  
-  // WebSocket Throttling Refs
-  const updatesBuffer = useRef({
-    activePositions: {}, // Map by position_id
-    selectedStocks: {},  // Map by symbol/key
-    pnlSummary: null,
-    hasUpdates: false
-  });
+  const fetchDashboardData = useCallback(async () => {
+    try {
+      const [stocksRes, posRes, pnlRes, historyRes, capRes, statusRes] =
+        await Promise.allSettled([
+          api.get("/v1/trading/execution/selected-stocks"),
+          api.get("/v1/trading/execution/active-positions"),
+          api.get("/v1/trading/execution/pnl-summary"),
+          api.get("/v1/trading/execution/trade-history?limit=30"),
+          api.get(`/v1/trading/capital/user-summary?trading_mode=${tradingMode}`),
+          api.get("/v1/trading/execution/auto-trading-status"),
+        ]);
 
-  // Batch process WebSocket updates
+      if (stocksRes.status === "fulfilled") {
+        const stocks = stocksRes.value.data?.selected_stocks || stocksRes.value.data || [];
+        setSelectedStocks(Array.isArray(stocks) ? stocks : []);
+      }
+      if (posRes.status === "fulfilled") {
+        const positions = posRes.value.data?.active_positions || posRes.value.data || [];
+        setActivePositions(Array.isArray(positions) ? positions : []);
+      }
+      if (pnlRes.status === "fulfilled") {
+        setPnlSummary(pnlRes.value.data || {});
+      }
+      if (historyRes.status === "fulfilled") {
+        const hist = historyRes.value.data?.trades || historyRes.value.data || [];
+        setTradeHistory(Array.isArray(hist) ? hist : []);
+      }
+      if (capRes.status === "fulfilled" && capRes.value.data) {
+        const cap = capRes.value.data;
+        setCapitalData({
+          total_available_capital: cap.total_available_capital || cap.current_balance || 100000,
+          total_used_margin: cap.total_used_margin || cap.used_margin || 0,
+          total_free_margin: cap.total_free_margin || cap.available_margin || 100000,
+          capital_utilization_percent: cap.capital_utilization_percent || 0,
+          trading_mode: cap.trading_mode || tradingMode,
+        });
+      }
+      if (statusRes.status === "fulfilled") {
+        setAutoTradingRunning(Boolean(statusRes.value.data?.is_running));
+        setWsConnected(Boolean(statusRes.value.data?.is_running));
+      }
+    } catch (err) {
+      console.error("Dashboard data error:", err);
+    }
+  }, [tradingMode]);
+
   useEffect(() => {
-    const processUpdates = () => {
-      if (!updatesBuffer.current.hasUpdates) return;
-
-      const buffer = updatesBuffer.current;
-      
-      // Batch update active positions
-      if (Object.keys(buffer.activePositions).length > 0) {
-        setActivePositions(prev => {
-          let hasChanges = false;
-          const newPositions = prev.map(pos => {
-            const update = buffer.activePositions[pos.position_id];
-            if (update) {
-              hasChanges = true;
-              return { ...pos, ...update };
-            }
-            return pos;
-          });
-          
-          return hasChanges ? newPositions : prev;
-        });
-        buffer.activePositions = {};
-      }
-
-      // Batch update selected stocks
-      if (Object.keys(buffer.selectedStocks).length > 0) {
-        setSelectedStocks(prev => {
-          let hasChanges = false;
-          const newStocks = prev.map(stock => {
-            const key = stock.option_instrument_key || stock.symbol;
-            const update = buffer.selectedStocks[key];
-            if (update) {
-              hasChanges = true;
-              return { ...stock, ...update };
-            }
-            return stock;
-          });
-          return hasChanges ? newStocks : prev;
-        });
-        buffer.selectedStocks = {};
-      }
-
-      buffer.hasUpdates = false;
-    };
-
-    const interval = setInterval(processUpdates, 200); // 200ms throttle for better responsiveness
+    fetchDashboardData();
+    const interval = setInterval(fetchDashboardData, 4000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchDashboardData]);
 
-  const fetchActivePositions = useCallback(async () => {
+  const handleToggleAutoTrading = async () => {
     try {
-      const response = await api.get("/v1/trading/execution/active-positions");
-      if (response.data.success) {
-        const newPositions = response.data.active_positions || [];
-        setActivePositions(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(newPositions)) {
-            return newPositions;
-          }
-          return prev;
-        });
-      }
+      const endpoint = autoTradingRunning
+        ? "/v1/trading/execution/stop-auto-trading"
+        : "/v1/trading/execution/start-auto-trading";
+      await api.post(endpoint, { trading_mode: tradingMode });
+      setAutoTradingRunning(!autoTradingRunning);
+      fetchDashboardData();
     } catch (err) {
-      console.error("Error fetching active positions:", err);
-      setActivePositions([]);
+      console.error("Toggle error:", err);
     }
-  }, []);
+  };
 
-  const fetchPortfolioSummary = useCallback(async () => {
-    try {
-      const response = await api.get("/v1/trading/execution/pnl-summary");
-      if (response.data.success) {
-        setPnlSummary(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(response.data.summary)) {
-            return response.data.summary;
-          }
-          return prev;
-        });
-      }
-    } catch (err) {
-      console.error("Error fetching PnL summary:", err);
-    }
-  }, []);
-
-  const fetchTradeHistory = useCallback(async () => {
-    try {
-      const response = await api.get(`/v1/trading/execution/trade-history?limit=50&trading_mode=${tradingMode}`);
-      if (response.data.success) {
-        const newHistory = response.data.trades || [];
-        setTradeHistory(prev => {
-          if (JSON.stringify(prev) !== JSON.stringify(newHistory)) {
-            return newHistory;
-          }
-          return prev;
-        });
-      }
-    } catch (err) {
-      console.error("Error fetching trade history:", err);
-    }
-  }, [tradingMode]);
-
-  const fetchTradingPreferences = useCallback(async () => {
-    try {
-      const response = await api.get("/v1/trading/execution/user-trading-preferences");
-      if (response.data.success) {
-        setTradingMode(response.data.trading_mode || "paper");
-        setExecutionMode(response.data.execution_mode || "multi_demat");
-      }
-    } catch (err) {
-      console.error("Error fetching trading preferences:", err);
-    }
-  }, []);
-
-  const fetchCapitalOverview = useCallback(async () => {
-    try {
-      const response = await api.get(`/v1/trading/execution/user-capital-overview?trading_mode=${tradingMode}`);
-      if (response.data.success) {
-        setCapitalData(response.data.capital_overview);
-      }
-    } catch (err) {
-      console.error("Error fetching capital overview:", err);
-    }
-  }, [tradingMode]);
-
-  const fetchSelectedStocks = useCallback(async () => {
-    // Only show loading state if we have no data
-    if (selectedStocks.length === 0) setStocksLoading(true);
-    
-    try {
-      const response = await api.get("/v1/trading/execution/selected-stocks");
-      const payload = response?.data;
-      if (!payload || !payload.success) {
-        // Only clear if we expected data but got error/empty
-        if (selectedStocks.length > 0) setSelectedStocks([]);
-        return;
-      }
-      const stocks = payload.stocks || [];
-      const cleanedStocks = stocks.map((stock) => ({
-        ...stock,
-        strike_price: stock.strike_price || 0,
-        lot_size: stock.lot_size || 0,
-        premium: stock.premium || 0,
-        capital_allocation: stock.capital_allocation || 0,
-        position_size_lots: stock.position_size_lots || 0,
-        max_loss: stock.max_loss || 0,
-        target_profit: stock.target_profit || 0,
-        selection_score: stock.selection_score || 0,
-        price_at_selection: stock.price_at_selection || 0,
-        symbol: stock.symbol || "",
-        option_type: stock.option_type || "N/A",
-        expiry_date: stock.expiry_date || "",
-        option_instrument_key: stock.option_instrument_key || "",
-        sector: stock.sector || "OTHER",
-      }));
-      
-      setSelectedStocks(prev => {
-        if (JSON.stringify(prev) !== JSON.stringify(cleanedStocks)) {
-          return cleanedStocks;
-        }
-        return prev;
-      });
-    } catch (err) {
-      console.error("Error fetching selected stocks:", err);
-      // Only clear if we strictly need to
-      // setSelectedStocks([]); 
-    } finally {
-      setStocksLoading(false);
-    }
-  }, [selectedStocks.length]);
-
-  const handleManualRefresh = useCallback(async () => {
-    setIsLoading(true);
-    await Promise.allSettled([
-      fetchActivePositions(),
-      fetchPortfolioSummary(),
-      fetchTradeHistory(),
-      fetchSelectedStocks(),
-      fetchCapitalOverview()
-    ]);
-    setLastUpdated(new Date());
-    setIsLoading(false);
-  }, [fetchActivePositions, fetchPortfolioSummary, fetchTradeHistory, fetchSelectedStocks, fetchCapitalOverview]);
-
-  const handleClosePosition = useCallback(async (positionId) => {
-    if (!window.confirm("Are you sure you want to close this position?")) {
-      return;
-    }
-    try {
-      const response = await api.post(`/v1/trading/execution/close-position/${positionId}`);
-      if (response.data.success) {
-        setSuccess(`Position closed. PnL: ₹${response.data.pnl.toFixed(2)}`);
-        handleManualRefresh();
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || "Failed to close position");
-    }
-  }, [handleManualRefresh]);
-
-  const handleEmergencyStopAll = useCallback(async () => {
-    if (!window.confirm("EMERGENCY STOP ALL POSITIONS\n\nThis will immediately close ALL active positions at market price.\n\nAre you absolutely sure you want to continue?")) {
-      return;
-    }
+  const handleEmergencyExit = async () => {
     setEmergencyStopLoading(true);
-    setError(null);
     try {
-      const closePromises = activePositions.map((position) =>
-        api.post(`/v1/trading/execution/close-position/${position.position_id}`)
-      );
-      const results = await Promise.allSettled(closePromises);
-      const successCount = results.filter((r) => r.status === "fulfilled").length;
-      const failCount = results.filter((r) => r.status === "rejected").length;
-      setSuccess(`Emergency Stop Complete: ${successCount} positions closed${failCount > 0 ? `, ${failCount} failed` : ""}`);
-      handleManualRefresh();
+      await api.post("/v1/trading/execution/emergency-exit-all");
+      setShowEmergencyModal(false);
+      fetchDashboardData();
     } catch (err) {
-      setError("Emergency stop failed. Please try closing positions individually.");
+      console.error("Emergency exit error:", err);
     } finally {
       setEmergencyStopLoading(false);
     }
-  }, [activePositions, handleManualRefresh]);
+  };
 
-  const updateTradingMode = useCallback(async (mode) => {
+  const handleManualSquareOff = async (positionId) => {
     try {
-      const response = await api.post(`/v1/trading/execution/user-trading-preferences?trading_mode=${mode}&execution_mode=${executionMode}`);
-      if (response.data.success) {
-        setTradingMode(mode);
-        setShowLiveConfirmation(false);
-      }
+      await api.post(`/v1/trading/execution/close-position/${positionId}`);
+      fetchDashboardData();
     } catch (err) {
-      console.error("Error updating trading mode:", err);
-      setError("Failed to update trading mode");
-      setShowLiveConfirmation(false);
+      console.error("Square off error:", err);
     }
-  }, [executionMode]);
-
-  const handleTradingModeToggle = useCallback(() => {
-    if (tradingMode === "paper") {
-      setShowLiveConfirmation(true);
-    } else {
-      updateTradingMode("paper");
-    }
-  }, [tradingMode, updateTradingMode]);
-
-  // Refresh data when trading mode changes
-  useEffect(() => {
-    fetchPortfolioSummary();
-    fetchCapitalOverview();
-  }, [tradingMode, fetchPortfolioSummary, fetchCapitalOverview]);
-
-  const initializeWebSocket = useCallback(() => {
-    try {
-      const baseUrl = process.env.REACT_APP_API_URL || "http://localhost:8000";
-      const wsUrl = baseUrl.replace("http://", "ws://").replace("https://", "wss://") + "/ws/unified";
-      const ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        setWsConnected(true);
-        ws.send(JSON.stringify({
-          type: "client_info",
-          client_type: "trading_execution",
-          timestamp: new Date().toISOString(),
-        }));
-        ws.send(JSON.stringify({
-          type: "subscribe",
-          events: ["all"],
-        }));
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          
-          if (message.type === "pnl_update") {
-            const data = message.data;
-            updatesBuffer.current.activePositions[data.position_id] = {
-              current_price: data.current_price,
-              current_pnl: data.pnl,
-              current_pnl_percentage: data.pnl_percent,
-              strike_price: data.strike_price,
-              stop_loss: data.stop_loss,
-              trailing_stop_active: data.trailing_sl_active,
-              last_updated: data.last_updated,
-            };
-            updatesBuffer.current.hasUpdates = true;
-            // Also trigger summary fetch periodically via interval, not here
-          }
-          
-          if (message.type === "trading_signal") {
-            setRealtimeStats(prev => ({
-              ...prev,
-              signals_today: prev.signals_today + 1
-            }));
-          }
-          
-          if (message.type === "trade_executed") {
-            const tradeData = message.data;
-            setSuccess(`Trade executed: ${tradeData.symbol} @ ₹${tradeData.entry_price.toFixed(2)}`);
-            setRealtimeStats(prev => ({
-              ...prev,
-              trades_today: prev.trades_today + 1
-            }));
-            // Immediate refresh for important events
-            handleManualRefresh();
-          }
-          
-          if (message.type === "active_position_created") {
-            // Immediate update for new position creation
-            const posData = message.data;
-            setActivePositions((prev) => {
-              const existingIndex = prev.findIndex((p) => p.position_id === posData.position_id);
-              if (existingIndex >= 0) return prev;
-              
-              return [{
-                position_id: posData.position_id,
-                trade_id: posData.trade_id,
-                symbol: posData.symbol,
-                instrument_key: posData.instrument_key,
-                option_type: posData.option_type,
-                strike_price: posData.strike_price,
-                entry_price: posData.entry_price,
-                current_price: posData.current_price || posData.entry_price,
-                stop_loss: posData.stop_loss,
-                target: posData.target,
-                quantity: posData.quantity,
-                current_pnl: posData.current_pnl || 0,
-                current_pnl_percentage: posData.current_pnl_percentage || 0,
-                broker_name: posData.broker_name,
-                trading_mode: posData.trading_mode,
-                entry_time: posData.timestamp,
-                last_updated: posData.timestamp,
-                trailing_stop_active: false,
-              }, ...prev];
-            });
-          }
-          
-          if (message.type === "trade_error") {
-            setError(`Trade error for ${message.data.symbol}: ${message.data.error}`);
-          }
-          
-          if (message.type === "trade_preparation_failed") {
-            if (message.data.status !== "pending_signal") {
-               setError(`Trade Blocked (${message.data.symbol}): ${message.data.reason}`);
-            }
-          }
-          
-          if (message.type === "position_closed") {
-            const posData = message.data;
-            setSuccess(`Position closed: ${posData.symbol} - PnL: ₹${posData.pnl.toFixed(2)}`);
-            handleManualRefresh();
-          }
-          
-          if (message.type === "selected_stock_price_update") {
-            const data = message.data;
-            const key = data.option_instrument_key || data.symbol;
-            
-            // Update Selected Stocks buffer
-            updatesBuffer.current.selectedStocks[key] = {
-              live_price: data.live_option_premium,
-              live_spot_price: data.live_spot_price,
-              price_change: data.price_change,
-              price_change_percent: data.price_change_percent,
-              unrealized_pnl: data.unrealized_pnl,
-              unrealized_pnl_percent: data.unrealized_pnl_percent,
-              state: data.state,
-              last_updated: data.timestamp,
-            };
-
-            // HIGH FREQUENCY FIX: Also update Active Positions using the same high-speed price data
-            // This bypasses the 1s PnL loop for the LTP (current_price) display
-            setActivePositions(prev => {
-              let hasAnyMatch = false;
-              const newPositions = prev.map(pos => {
-                if (pos.instrument_key === data.option_instrument_key) {
-                  hasAnyMatch = true;
-                  // Calculate local PnL for ultra-fast UI updates
-                  const entryPrice = parseFloat(pos.entry_price);
-                  const currentPrice = parseFloat(data.live_option_premium);
-                  const qty = parseInt(pos.quantity);
-                  
-                  // Rough estimate including charges (standard ₹40 + 0.1% turnover)
-                  const buyVal = entryPrice * qty;
-                  const sellVal = currentPrice * qty;
-                  const turnover = buyVal + sellVal;
-                  const estCharges = 40.0 + (turnover * 0.001);
-                  const grossPnl = (currentPrice - entryPrice) * qty;
-                  const netPnl = grossPnl - estCharges;
-                  const totalInvestment = pos.total_investment || (entryPrice * qty);
-                  const pnlPercent = (netPnl / totalInvestment) * 100;
-
-                  return {
-                    ...pos,
-                    current_price: currentPrice,
-                    current_pnl: netPnl,
-                    current_pnl_percentage: pnlPercent,
-                    last_updated: data.timestamp
-                  };
-                }
-                return pos;
-              });
-              return hasAnyMatch ? newPositions : prev;
-            });
-
-            updatesBuffer.current.hasUpdates = true;
-          }
-        } catch (parseError) {
-          console.error("Error parsing WebSocket message:", parseError);
-        }
-      };
-
-      ws.onclose = (event) => {
-        setWsConnected(false);
-        setTimeout(() => {
-          if (socketRef.current === ws) {
-            initializeWebSocket();
-          }
-        }, 5000);
-      };
-
-      ws.onerror = (error) => {
-        console.error("WebSocket error:", error);
-        setWsConnected(false);
-      };
-
-      socketRef.current = ws;
-    } catch (err) {
-      console.error("WebSocket connection error:", err);
-      setWsConnected(false);
-    }
-  }, [handleManualRefresh]);
-
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        await Promise.allSettled([
-          fetchTradingPreferences(),
-          fetchSelectedStocks(),
-          fetchPortfolioSummary(),
-          fetchActivePositions(),
-          fetchCapitalOverview(),
-          fetchTradeHistory(),
-        ]);
-      } catch (err) {
-        console.error("Error loading initial data:", err);
-      } finally {
-        setIsLoading(false);
-      }
-      initializeWebSocket();
-    };
-    loadInitialData();
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-        socketRef.current = null;
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === 0) fetchActivePositions();
-    if (activeTab === 1) fetchSelectedStocks();
-    if (activeTab === 2) fetchTradeHistory();
-  }, [activeTab, fetchActivePositions, fetchSelectedStocks, fetchTradeHistory]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        if (activeTab === 0) fetchActivePositions();
-        // Only fetch stocks if we don't have them yet. 
-        // Once loaded, they are static for the day (prices update via WebSocket)
-        if (selectedStocks.length === 0) fetchSelectedStocks(); 
-        if (activeTab === 2) fetchTradeHistory(); 
-        fetchPortfolioSummary(); 
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [activeTab, fetchPortfolioSummary, fetchActivePositions, fetchSelectedStocks, fetchTradeHistory, selectedStocks.length]);
-
-  useEffect(() => {
-    const checkAutoTradingStatus = async () => {
-      if (document.visibilityState !== "visible") return;
-      try {
-        const response = await api.get("/v1/trading/execution/auto-trading-status");
-        if (response.data.success) {
-          setAutoTradingRunning(response.data.websocket_running || false);
-        }
-      } catch (err) {
-        console.error("Failed to get auto-trading status:", err);
-      }
-    };
-    checkAutoTradingStatus();
-    const interval = setInterval(checkAutoTradingStatus, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    setRealtimeStats(prev => ({
-      ...prev,
-      active_stocks: selectedStocks.length
-    }));
-  }, [selectedStocks]);
-
-  const formatCurrency = useCallback((amount) => {
-    const formatted = new Intl.NumberFormat('en-IN', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(Math.abs(amount || 0));
-    return `${amount < 0 ? '-' : ''}₹${formatted}`;
-  }, []);
-
-  const formatPercentage = useCallback((value = 0) => {
-    const num = Number.isFinite(value) ? value : 0;
-    return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
-  }, []);
-
-  const getPnlColor = useCallback((value) => {
-    if (value > 0) return 'tw-text-emerald-500';
-    if (value < 0) return 'tw-text-rose-500';
-    return 'tw-text-slate-300';
-  }, []);
-
-  const getPnlBgColor = useCallback((value) => {
-    if (value > 0) return 'tw-bg-emerald-500/10 tw-border-emerald-500/30';
-    if (value < 0) return 'tw-bg-rose-500/10 tw-border-rose-500/30';
-    return 'tw-bg-slate-500/10 tw-border-slate-500/30';
-  }, []);
-
-  if (isLoading) {
-    return (
-      <div className="tw-min-h-screen tw-bg-gradient-to-br tw-from-slate-950 tw-via-slate-900 tw-to-slate-950 tw-flex tw-items-center tw-justify-center">
-        <div className="tw-text-center tw-space-y-4">
-          <div className="tw-relative tw-w-20 tw-h-20 tw-mx-auto">
-            <div className="tw-absolute tw-inset-0 tw-border-4 tw-border-slate-700/30 tw-rounded-full"></div>
-            <div className="tw-absolute tw-inset-0 tw-border-4 tw-border-cyan-500 tw-rounded-full tw-border-t-transparent tw-animate-spin"></div>
-          </div>
-          <div>
-            <p className="tw-text-slate-300 tw-text-lg tw-font-semibold">Loading Trading Dashboard</p>
-            <p className="tw-text-slate-500 tw-text-sm">Initializing systems...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  };
 
   return (
-    <div className="tw-min-h-screen tw-bg-gradient-to-br tw-from-slate-950 tw-via-slate-900 tw-to-slate-950 tw-p-4 md:tw-p-6 lg:tw-p-8">
-      {/* Sticky Header with Emergency Controls */}
-      <div className="tw-sticky tw-top-0 tw-z-50 tw-bg-slate-900/95 tw-backdrop-blur-xl tw-border-b tw-border-slate-700/50 tw-mb-6 tw-p-4 tw-rounded-2xl tw-shadow-2xl">
-        <div className="tw-flex tw-flex-col lg:tw-flex-row lg:tw-items-center lg:tw-justify-between tw-gap-4">
-          {/* Left: Title & Mode */}
-          <div>
-            <h1 className="tw-text-2xl tw-font-bold tw-text-white tw-mb-2">Automated Trading</h1>
-            <div className="tw-flex tw-items-center tw-gap-3">
-              <span className={`tw-px-3 tw-py-1 tw-rounded-full tw-text-xs tw-font-bold tw-uppercase ${tradingMode === "paper" ? 'tw-bg-cyan-500/20 tw-text-cyan-300 tw-border tw-border-cyan-500/30' : 'tw-bg-rose-500/20 tw-text-rose-300 tw-border tw-border-rose-500/30'}`}>
-                {tradingMode === "paper" ? "PAPER" : "LIVE"}
-              </span>
-              <span className="tw-text-slate-400 tw-text-sm">
-                {activePositions.length} Active Position{activePositions.length !== 1 ? "s" : ""}
-              </span>
-              {/* WebSocket Status */}
-              <div className="tw-flex tw-items-center tw-gap-1.5 tw-px-2 tw-py-1 tw-bg-slate-800/50 tw-rounded-full tw-border tw-border-slate-700/50" title={wsConnected ? "Real-time connection active" : "Connecting..."}>
-                <span className={`tw-w-2 tw-h-2 tw-rounded-full ${wsConnected ? 'tw-bg-emerald-500 tw-animate-pulse' : 'tw-bg-rose-500'}`}></span>
-                <span className="tw-text-[10px] tw-font-medium tw-text-slate-400">{wsConnected ? "LIVE" : "OFFLINE"}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Center: Quick P&L */}
-          <div className="tw-text-center lg:tw-px-6">
-            <p className="tw-text-slate-400 tw-text-xs tw-uppercase tw-tracking-wider tw-mb-1">Total P&L</p>
-            <p className={`tw-text-3xl tw-font-bold ${getPnlColor(pnlSummary.total_pnl)}`}>
-              {formatCurrency(pnlSummary.total_pnl)}
-            </p>
-            <p className={`tw-text-sm ${getPnlColor(pnlSummary.pnl_percent)}`}>
-              {formatPercentage(pnlSummary.pnl_percent)}
-            </p>
-          </div>
-
-          {/* Right: Controls */}
-          <div className="tw-flex tw-gap-3">
-            {/* Manual Refresh Button */}
-            <div className="tw-flex tw-flex-col tw-items-end tw-justify-center">
-              <button 
-                onClick={handleManualRefresh} 
-                disabled={isLoading}
-                className="tw-p-3 tw-bg-slate-800 hover:tw-bg-slate-700 tw-text-slate-300 hover:tw-text-white tw-rounded-xl tw-transition-all tw-border tw-border-slate-700 hover:tw-border-slate-600 disabled:tw-opacity-50"
-                title="Force Refresh Data"
-              >
-                <svg className={`tw-w-5 tw-h-5 ${isLoading ? 'tw-animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-              <span className="tw-text-[10px] tw-text-slate-500 tw-mt-1">
-                Updated: {lastUpdated.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </div>
-
-            {/* Emergency Stop */}
-            <button
-              onClick={handleEmergencyStopAll}
-              disabled={emergencyStopLoading || activePositions.length === 0}
-              className="tw-px-6 tw-py-3 tw-bg-rose-600 hover:tw-bg-rose-700 tw-text-white tw-rounded-xl tw-font-semibold tw-transition-all tw-duration-200 tw-shadow-lg hover:tw-shadow-xl disabled:tw-opacity-50 disabled:tw-cursor-not-allowed tw-flex tw-items-center tw-justify-center tw-gap-2"
-            >
-              <svg className="tw-w-5 tw-h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-              </svg>
-              {emergencyStopLoading ? "STOPPING..." : "EMERGENCY STOP"}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Alerts */}
-      {error && (
-        <div className="tw-mb-6 tw-p-4 tw-bg-rose-500/10 tw-border tw-border-rose-500/30 tw-rounded-xl tw-flex tw-items-start tw-gap-3">
-          <svg className="tw-w-5 tw-h-5 tw-text-rose-400 tw-flex-shrink-0 tw-mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <div className="tw-flex-1">
-            <p className="tw-text-rose-300 tw-font-medium">{error}</p>
-          </div>
-          <button onClick={() => setError(null)} className="tw-text-rose-400 hover:tw-text-rose-300">
-            <svg className="tw-w-5 tw-h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-      )}
-      {success && (
-        <div className="tw-mb-6 tw-p-4 tw-bg-emerald-500/10 tw-border tw-border-emerald-500/30 tw-rounded-xl tw-flex tw-items-start tw-gap-3">
-          <svg className="tw-w-5 tw-h-5 tw-text-emerald-400 tw-flex-shrink-0 tw-mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-          </svg>
-          <div className="tw-flex-1">
-            <p className="tw-text-emerald-300 tw-font-medium">{success}</p>
-          </div>
-          <button onClick={() => setSuccess(null)} className="tw-text-emerald-400 hover:tw-text-emerald-300">
-            <svg className="tw-w-5 tw-h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
-            </svg>
-          </button>
-        </div>
-      )}
-
-      {/* Portfolio Summary */}
-      <div className="tw-mb-6 tw-bg-slate-900/50 tw-backdrop-blur-xl tw-border tw-border-slate-700/50 tw-rounded-2xl tw-p-6 tw-shadow-2xl">
-        <h2 className="tw-text-xl tw-font-bold tw-text-white tw-mb-6">Portfolio Summary</h2>
-        <div className="tw-grid tw-grid-cols-1 sm:tw-grid-cols-2 lg:tw-grid-cols-4 tw-gap-4">
-          <div className={`tw-p-5 tw-rounded-xl tw-border ${getPnlBgColor(pnlSummary.total_pnl)}`}>
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-2">Total P&L</p>
-            <p className={`tw-text-3xl tw-font-bold ${getPnlColor(pnlSummary.total_pnl)}`}>
-              {formatCurrency(pnlSummary.total_pnl)}
-            </p>
-            <p className={`tw-text-sm tw-mt-1 ${getPnlColor(pnlSummary.pnl_percent)}`}>
-              {formatPercentage(pnlSummary.pnl_percent)}
-            </p>
-          </div>
-          <div className="tw-p-5 tw-bg-slate-800/50 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-2">Active Positions</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-white">{pnlSummary.active_positions_count}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-slate-800/50 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-2">Total Investment</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-white">{formatCurrency(pnlSummary.total_investment)}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-slate-800/50 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <div className="tw-flex tw-items-center tw-justify-between tw-mb-2">
-              <p className="tw-text-slate-400 tw-text-xs tw-font-bold tw-uppercase tw-tracking-wider">Available Capital</p>
-              {tradingMode === 'paper' && (
-                <button 
-                  onClick={() => setIsAddFundsOpen(true)}
-                  className="tw-px-3 tw-py-1 tw-bg-indigo-600 hover:tw-bg-indigo-700 tw-text-white tw-text-[10px] tw-font-black tw-uppercase tw-rounded-lg tw-transition-all tw-flex tw-items-center tw-gap-1.5 tw-shadow-lg tw-shadow-indigo-900/20 active:tw-scale-95"
-                >
-                  <Plus className="tw-w-3 tw-h-3" />
-                  Add Funds
-                </button>
-              )}
-            </div>
-            <p className="tw-text-3xl tw-font-bold tw-text-cyan-400">{formatCurrency(capitalData.total_free_margin)}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Real-time Activity Stats - NEW DESIGN */}
-      <div className="tw-mb-6 tw-bg-gradient-to-br tw-from-slate-900/50 tw-to-slate-800/50 tw-backdrop-blur-xl tw-border tw-border-slate-700/50 tw-rounded-2xl tw-p-6 tw-shadow-2xl">
-        <div className="tw-flex tw-items-center tw-justify-between tw-mb-6">
-          <h2 className="tw-text-xl tw-font-bold tw-text-white tw-flex tw-items-center tw-gap-3">
-            <span className="tw-relative tw-flex tw-h-3 tw-w-3">
-              <span className={`tw-animate-ping tw-absolute tw-inline-flex tw-h-full tw-w-full tw-rounded-full ${autoTradingRunning ? 'tw-bg-emerald-400' : 'tw-bg-slate-400'} tw-opacity-75`}></span>
-              <span className={`tw-relative tw-inline-flex tw-rounded-full tw-h-3 tw-w-3 ${autoTradingRunning ? 'tw-bg-emerald-500' : 'tw-bg-slate-500'}`}></span>
-            </span>
-            Real-Time Activity
-          </h2>
-          <span className={`tw-px-3 tw-py-1 tw-rounded-full tw-text-xs tw-font-bold ${autoTradingRunning ? 'tw-bg-emerald-500/20 tw-text-emerald-300 tw-border tw-border-emerald-500/30' : 'tw-bg-slate-500/20 tw-text-slate-400 tw-border tw-border-slate-500/30'}`}>
-            {autoTradingRunning ? 'MONITORING' : 'IDLE'}
-          </span>
-        </div>
-        <div className="tw-grid tw-grid-cols-1 sm:tw-grid-cols-3 tw-gap-4">
-          <div className="tw-p-5 tw-bg-cyan-500/10 tw-rounded-xl tw-border tw-border-cyan-500/30">
-            <div className="tw-flex tw-items-center tw-justify-between tw-mb-2">
-              <p className="tw-text-cyan-300 tw-text-sm tw-font-medium">Signals Today</p>
-              <svg className="tw-w-5 tw-h-5 tw-text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
-              </svg>
-            </div>
-            <p className="tw-text-3xl tw-font-bold tw-text-cyan-400">{realtimeStats.signals_today}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-emerald-500/10 tw-rounded-xl tw-border tw-border-emerald-500/30">
-            <div className="tw-flex tw-items-center tw-justify-between tw-mb-2">
-              <p className="tw-text-emerald-300 tw-text-sm tw-font-medium">Trades Executed</p>
-              <svg className="tw-w-5 tw-h-5 tw-text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-              </svg>
-            </div>
-            <p className="tw-text-3xl tw-font-bold tw-text-emerald-400">{realtimeStats.trades_today}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-amber-500/10 tw-rounded-xl tw-border tw-border-amber-500/30">
-            <div className="tw-flex tw-items-center tw-justify-between tw-mb-2">
-              <p className="tw-text-amber-300 tw-text-sm tw-font-medium">Active Stocks</p>
-              <svg className="tw-w-5 tw-h-5 tw-text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"/>
-              </svg>
-            </div>
-            <p className="tw-text-3xl tw-font-bold tw-text-amber-400">{realtimeStats.active_stocks}</p>
-          </div>
-        </div>
-        {autoTradingRunning && (
-          <div className="tw-mt-4 tw-p-4 tw-bg-slate-800/30 tw-rounded-xl tw-border tw-border-slate-700/30">
-            <p className="tw-text-sm tw-text-slate-300">
-              <span className="tw-font-semibold tw-text-emerald-400">Strategy Active:</span> Monitoring {selectedStocks.length} stocks • Real-time signal processing • Auto-execution enabled
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Trading Settings */}
-      <div className="tw-mb-6 tw-bg-slate-900/50 tw-backdrop-blur-xl tw-border tw-border-slate-700/50 tw-rounded-2xl tw-p-6 tw-shadow-2xl">
-        <h2 className="tw-text-xl tw-font-bold tw-text-white tw-mb-6">Trading Settings</h2>
-        <div className="tw-grid tw-grid-cols-1 md:tw-grid-cols-2 tw-gap-6">
-          <div className={`tw-p-5 tw-rounded-xl tw-border ${tradingMode === "live" ? 'tw-border-rose-500/50 tw-bg-rose-500/5' : 'tw-border-slate-700/50 tw-bg-slate-800/30'}`}>
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-3">Trading Mode</p>
-            <label className="tw-flex tw-items-center tw-gap-3 tw-cursor-pointer">
-              <div className="tw-relative">
-                <input
-                  type="checkbox"
-                  checked={tradingMode === "live"}
-                  onChange={handleTradingModeToggle}
-                  className="tw-sr-only tw-peer"
-                />
-                <div className="tw-w-14 tw-h-7 tw-bg-slate-700 tw-peer-focus:tw-outline-none tw-rounded-full tw-peer tw-peer-checked:after:tw-translate-x-full peer-checked:after:tw-border-white after:tw-content-[''] after:tw-absolute after:tw-top-0.5 after:tw-left-[4px] after:tw-bg-white after:tw-border-slate-300 after:tw-border after:tw-rounded-full after:tw-h-6 after:tw-w-6 after:tw-transition-all tw-peer-checked:tw-bg-rose-600"></div>
-              </div>
-              <div>
-                <p className="tw-text-white tw-font-medium">{tradingMode === "paper" ? "Paper Trading" : "Live Trading"}</p>
-                <p className="tw-text-xs tw-text-slate-400">
-                  {tradingMode === "paper" ? "Virtual ₹10 lakhs - No real money" : "⚠️ Real money trading - Actual broker API"}
-                </p>
-              </div>
-            </label>
-          </div>
-          <div className="tw-p-5 tw-bg-slate-800/30 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-3">Execution Mode</p>
-            <label className="tw-flex tw-items-center tw-gap-3 tw-cursor-pointer">
-              <div className="tw-relative">
-                <input
-                  type="checkbox"
-                  checked={executionMode === "multi_demat"}
-                  onChange={async (e) => {
-                    const newMode = e.target.checked ? "multi_demat" : "single_demat";
-                    try {
-                      const response = await api.post(`/v1/trading/execution/user-trading-preferences?trading_mode=${tradingMode}&execution_mode=${newMode}`);
-                      if (response.data.success) {
-                        setExecutionMode(newMode);
-                      }
-                    } catch (err) {
-                      console.error("Error updating execution mode:", err);
-                    }
+    <Box sx={{ bgcolor: "#0b0f19", minHeight: "100vh", color: "#f8fafc", py: 3, px: { xs: 2, md: 4 } }}>
+      <Container maxWidth="xl" disableGutters>
+        
+        {/* HERO CONTROL HEADER */}
+        <Paper
+          elevation={0}
+          sx={{
+            p: { xs: 2.5, md: 3 },
+            mb: 3,
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, rgba(19, 28, 46, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%)",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            backdropFilter: "blur(16px)",
+          }}
+        >
+          <Grid container spacing={2} alignItems="center" justifyContent="space-between">
+            <Grid item xs={12} md={5}>
+              <Stack direction="row" spacing={2} alignItems="center">
+                <Box
+                  sx={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: "12px",
+                    background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    boxShadow: "0 0 20px rgba(59, 130, 246, 0.35)",
                   }}
-                  className="tw-sr-only tw-peer"
-                />
-                <div className="tw-w-14 tw-h-7 tw-bg-slate-700 tw-peer-focus:tw-outline-none tw-rounded-full tw-peer tw-peer-checked:after:tw-translate-x-full peer-checked:after:tw-border-white after:tw-content-[''] after:tw-absolute after:tw-top-0.5 after:tw-left-[4px] after:tw-bg-white after:tw-border-slate-300 after:tw-border after:tw-rounded-full after:tw-h-6 after:tw-w-6 after:tw-transition-all tw-peer-checked:tw-bg-cyan-600"></div>
-              </div>
-              <div>
-                <p className="tw-text-white tw-font-medium">{executionMode === "multi_demat" ? "Multi-Demat" : "Single-Demat"}</p>
-                <p className="tw-text-xs tw-text-slate-400">
-                  {executionMode === "multi_demat" ? "Distribute across all active demats" : "Execute on default demat only"}
-                </p>
-              </div>
-            </label>
-          </div>
-        </div>
-      </div>
+                >
+                  <Zap size={26} color="#ffffff" />
+                </Box>
+                <Box>
+                  <Stack direction="row" spacing={1.5} alignItems="center">
+                    <Typography variant="h5" sx={{ fontWeight: 800, color: "#ffffff", letterSpacing: "-0.02em" }}>
+                      Auto-Trading Hub
+                    </Typography>
+                    <Chip
+                      icon={<span className="live-pulse-dot" style={{ marginLeft: 6 }} />}
+                      label={autoTradingRunning ? "ENGINE LIVE" : "ENGINE IDLE"}
+                      size="small"
+                      sx={{
+                        bgcolor: autoTradingRunning ? "rgba(16, 185, 129, 0.15)" : "rgba(148, 163, 184, 0.15)",
+                        color: autoTradingRunning ? "#34d399" : "#94a3b8",
+                        border: `1px solid ${autoTradingRunning ? "rgba(16, 185, 129, 0.3)" : "rgba(148, 163, 184, 0.3)"}`,
+                        fontWeight: 700,
+                        fontSize: "0.75rem",
+                      }}
+                    />
+                  </Stack>
+                  <Typography variant="body2" sx={{ color: "#94a3b8", mt: 0.3 }}>
+                    SuperTrend + EMA Spot Sentiment Strategy with Real-Time ATM Rolling
+                  </Typography>
+                </Box>
+              </Stack>
+            </Grid>
 
-      {/* Capital Overview */}
-      <div className="tw-mb-6 tw-bg-slate-900/50 tw-backdrop-blur-xl tw-border tw-border-slate-700/50 tw-rounded-2xl tw-p-6 tw-shadow-2xl">
-        <div className="tw-flex tw-items-center tw-justify-between tw-mb-6">
-          <h2 className="tw-text-xl tw-font-bold tw-text-white">Capital Overview</h2>
-          <span className="tw-px-3 tw-py-1 tw-rounded-full tw-text-xs tw-font-bold tw-bg-cyan-500/20 tw-text-cyan-300 tw-border tw-border-cyan-500/30">
-            {capitalData.active_demats || 0} Active Demat{(capitalData.active_demats || 0) !== 1 ? "s" : ""}
-          </span>
-        </div>
-        <div className="tw-grid tw-grid-cols-1 sm:tw-grid-cols-2 lg:tw-grid-cols-4 tw-gap-4">
-          <div className="tw-p-5 tw-bg-slate-800/50 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-2">Total Capital</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-white">{formatCurrency(capitalData.total_available_capital || 0)}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-rose-500/10 tw-rounded-xl tw-border tw-border-rose-500/30">
-            <p className="tw-text-rose-300 tw-text-sm tw-mb-2">Used Margin</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-rose-400">{formatCurrency(Math.abs(capitalData.total_used_margin || 0))}</p>
-            <p className="tw-text-xs tw-text-slate-400 tw-mt-1">{Math.abs(capitalData.capital_utilization_percent || 0).toFixed(1)}% utilized</p>
-          </div>
-          <div className="tw-p-5 tw-bg-emerald-500/10 tw-rounded-xl tw-border tw-border-emerald-500/30">
-            <p className="tw-text-emerald-300 tw-text-sm tw-mb-2">Available Cash</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-emerald-400">{formatCurrency(capitalData.total_free_margin || 0)}</p>
-          </div>
-          <div className="tw-p-5 tw-bg-slate-800/50 tw-rounded-xl tw-border tw-border-slate-700/50">
-            <p className="tw-text-slate-400 tw-text-sm tw-mb-2">Max Per Trade</p>
-            <p className="tw-text-3xl tw-font-bold tw-text-cyan-400">{formatCurrency(capitalData.max_trade_allocation || 0)}</p>
-            <p className="tw-text-xs tw-text-slate-400 tw-mt-1">60% of total</p>
-          </div>
-        </div>
-      </div>
+            <Grid item xs={12} md={7}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={2}
+                alignItems={{ xs: "stretch", sm: "center" }}
+                justifyContent="flex-end"
+              >
+                <Box
+                  sx={{
+                    bgcolor: "rgba(15, 23, 42, 0.8)",
+                    p: "4px",
+                    borderRadius: "12px",
+                    border: "1px solid rgba(51, 65, 85, 0.6)",
+                    display: "flex",
+                  }}
+                >
+                  <Button
+                    size="small"
+                    onClick={() => setTradingMode("paper")}
+                    sx={{
+                      px: 2,
+                      py: 0.8,
+                      borderRadius: "9px",
+                      fontWeight: 700,
+                      fontSize: "0.8rem",
+                      bgcolor: tradingMode === "paper" ? "#3b82f6" : "transparent",
+                      color: tradingMode === "paper" ? "#ffffff" : "#94a3b8",
+                      "&:hover": { bgcolor: tradingMode === "paper" ? "#2563eb" : "rgba(255,255,255,0.05)" },
+                    }}
+                  >
+                    📝 Paper Trading
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => setShowLiveConfirmation(true)}
+                    sx={{
+                      px: 2,
+                      py: 0.8,
+                      borderRadius: "9px",
+                      fontWeight: 700,
+                      fontSize: "0.8rem",
+                      bgcolor: tradingMode === "live" ? "#10b981" : "transparent",
+                      color: tradingMode === "live" ? "#ffffff" : "#94a3b8",
+                      "&:hover": { bgcolor: tradingMode === "live" ? "#059669" : "rgba(255,255,255,0.05)" },
+                    }}
+                  >
+                    ⚡ Live Broker Mode
+                  </Button>
+                </Box>
 
-      {/* Tabbed Content */}
-      <div className="tw-bg-slate-900/50 tw-backdrop-blur-xl tw-border tw-border-slate-700/50 tw-rounded-2xl tw-shadow-2xl tw-overflow-hidden">
-        <div className="tw-flex tw-border-b tw-border-slate-700/50">
-          {['Active Positions', 'Selected Stocks', 'Trade History'].map((tab, index) => (
-            <button
-              key={index}
-              onClick={() => setActiveTab(index)}
-              className={`tw-flex-1 tw-px-6 tw-py-4 tw-font-semibold tw-transition-all tw-duration-200 ${
-                activeTab === index
-                  ? 'tw-bg-slate-800 tw-text-white tw-border-b-2 tw-border-cyan-500'
-                  : 'tw-text-slate-400 hover:tw-text-white hover:tw-bg-slate-800/50'
-              }`}
+                <Button
+                  variant="contained"
+                  onClick={handleToggleAutoTrading}
+                  startIcon={autoTradingRunning ? <Square size={16} /> : <Play size={16} />}
+                  sx={{
+                    px: 3,
+                    py: 1.1,
+                    borderRadius: "12px",
+                    fontWeight: 700,
+                    fontSize: "0.85rem",
+                    bgcolor: autoTradingRunning ? "#ef4444" : "#10b981",
+                    "&:hover": { bgcolor: autoTradingRunning ? "#dc2626" : "#059669" },
+                    boxShadow: autoTradingRunning
+                      ? "0 0 15px rgba(239, 68, 68, 0.4)"
+                      : "0 0 15px rgba(16, 185, 129, 0.4)",
+                  }}
+                >
+                  {autoTradingRunning ? "Stop Engine" : "Start Auto-Trader"}
+                </Button>
+
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={() => setShowEmergencyModal(true)}
+                  startIcon={<ShieldAlert size={16} />}
+                  sx={{
+                    px: 2.5,
+                    py: 1.1,
+                    borderRadius: "12px",
+                    fontWeight: 700,
+                    fontSize: "0.85rem",
+                    borderColor: "rgba(244, 63, 94, 0.4)",
+                    color: "#f43f5e",
+                    "&:hover": {
+                      bgcolor: "rgba(244, 63, 94, 0.1)",
+                      borderColor: "#f43f5e",
+                    },
+                  }}
+                >
+                  Emergency Exit
+                </Button>
+              </Stack>
+            </Grid>
+          </Grid>
+        </Paper>
+
+        {/* METRICS GRID CARDS */}
+        <Grid container spacing={2.5} sx={{ mb: 3 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <Card
+              elevation={0}
+              sx={{
+                borderRadius: "16px",
+                bgcolor: "#131c2e",
+                border: `1px solid ${pnlSummary.total_pnl >= 0 ? "rgba(16, 185, 129, 0.3)" : "rgba(244, 63, 94, 0.3)"}`,
+              }}
             >
-              {tab} ({index === 0 ? activePositions.length : index === 1 ? selectedStocks.length : tradeHistory.length})
-            </button>
-          ))}
-        </div>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>
+                    Today's Net P&L
+                  </Typography>
+                  <Box
+                    sx={{
+                      p: 0.8,
+                      borderRadius: "8px",
+                      bgcolor: pnlSummary.total_pnl >= 0 ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)",
+                      color: pnlSummary.total_pnl >= 0 ? "#34d399" : "#f87171",
+                    }}
+                  >
+                    {pnlSummary.total_pnl >= 0 ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
+                  </Box>
+                </Stack>
+                <Typography
+                  variant="h4"
+                  sx={{
+                    fontWeight: 900,
+                    color: pnlSummary.total_pnl >= 0 ? "#10b981" : "#f43f5e",
+                    letterSpacing: "-0.03em",
+                  }}
+                >
+                  {formatCurrency(pnlSummary.total_pnl)}
+                </Typography>
+                <Typography variant="body2" sx={{ color: pnlSummary.total_pnl >= 0 ? "#34d399" : "#f87171", fontWeight: 700, mt: 0.5 }}>
+                  {formatPercent(pnlSummary.pnl_percent)} return on capital
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
 
-        <div className="tw-p-6">
-          {/* Active Positions Tab - REDESIGNED */}
-          {activeTab === 0 && (
-            <div>
-              {activePositions.length > 0 ? (
-                <div className="tw-flex tw-flex-col tw-gap-2">
-                  {/* Table Header for Desktop */}
-                  <div className="tw-hidden lg:tw-grid tw-grid-cols-12 tw-gap-4 tw-px-6 tw-py-2 tw-text-[10px] tw-font-black tw-text-slate-500 tw-uppercase tw-tracking-widest">
-                    <div className="tw-col-span-3">Instrument & Time</div>
-                    <div className="tw-col-span-2">Position / Qty</div>
-                    <div className="tw-col-span-2">Entry / SL / Tgt</div>
-                    <div className="tw-col-span-2">LTP & Market</div>
-                    <div className="tw-col-span-2 tw-text-right">PnL & %</div>
-                    <div className="tw-col-span-1 tw-text-right">Action</div>
-                  </div>
-                  
-                  <div className="tw-space-y-2">
+          <Grid item xs={12} sm={6} md={3}>
+            <Card elevation={0} sx={{ borderRadius: "16px", bgcolor: "#131c2e", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>
+                    Capital Utilization
+                  </Typography>
+                  <IconButton size="small" onClick={() => setIsAddFundsOpen(true)} sx={{ color: "#3b82f6" }}>
+                    <Plus size={18} />
+                  </IconButton>
+                </Stack>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: "#ffffff" }}>
+                  {formatCurrency(capitalData.total_free_margin)}
+                </Typography>
+                <Typography variant="caption" sx={{ color: "#94a3b8", display: "block", mb: 1 }}>
+                  Available / {formatCurrency(capitalData.total_available_capital)} Total
+                </Typography>
+                <LinearProgress
+                  variant="determinate"
+                  value={Math.min(100, Math.max(0, capitalData.capital_utilization_percent || 0))}
+                  sx={{
+                    height: 6,
+                    borderRadius: 3,
+                    bgcolor: "rgba(51, 65, 85, 0.5)",
+                    "& .MuiLinearProgress-bar": { bgcolor: "#3b82f6", borderRadius: 3 },
+                  }}
+                />
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Card elevation={0} sx={{ borderRadius: "16px", bgcolor: "#131c2e", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>
+                    Active Positions
+                  </Typography>
+                  <Box sx={{ p: 0.8, borderRadius: "8px", bgcolor: "rgba(59, 130, 246, 0.15)", color: "#60a5fa" }}>
+                    <Layers size={18} />
+                  </Box>
+                </Stack>
+                <Typography variant="h4" sx={{ fontWeight: 900, color: "#ffffff" }}>
+                  {activePositions.length} <Typography component="span" variant="body1" sx={{ color: "#94a3b8" }}>/ 5 max</Typography>
+                </Typography>
+                <Typography variant="body2" sx={{ color: "#94a3b8", mt: 0.5 }}>
+                  {selectedStocks.length} Stocks Selected Today
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Card elevation={0} sx={{ borderRadius: "16px", bgcolor: "#131c2e", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+              <CardContent sx={{ p: 2.5 }}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                  <Typography variant="caption" sx={{ color: "#94a3b8", fontWeight: 700, textTransform: "uppercase" }}>
+                    Engine Speed & Feed
+                  </Typography>
+                  <Box sx={{ p: 0.8, borderRadius: "8px", bgcolor: "rgba(16, 185, 129, 0.15)", color: "#34d399" }}>
+                    <Activity size={18} />
+                  </Box>
+                </Stack>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: "#ffffff" }}>
+                  {wsConnected ? "Connected" : "Reconnecting..."}
+                </Typography>
+                <Typography variant="body2" sx={{ color: wsConnected ? "#34d399" : "#f59e0b", fontWeight: 700, mt: 0.5 }}>
+                  Upstox WebSocket V3 Feed
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+
+        {/* WORKTAB NAVIGATION */}
+        <Paper
+          elevation={0}
+          sx={{
+            borderRadius: "16px",
+            bgcolor: "#131c2e",
+            border: "1px solid rgba(255, 255, 255, 0.08)",
+            overflow: "hidden",
+          }}
+        >
+          <Box sx={{ borderBottom: 1, borderColor: "rgba(51, 65, 85, 0.6)", px: 2, pt: 1 }}>
+            <Tabs
+              value={activeTab}
+              onChange={(e, val) => setActiveTab(val)}
+              textColor="primary"
+              indicatorColor="primary"
+              sx={{
+                "& .MuiTab-root": {
+                  textTransform: "none",
+                  fontWeight: 700,
+                  fontSize: "0.9rem",
+                  color: "#94a3b8",
+                  minHeight: 48,
+                  "&.Mui-selected": { color: "#3b82f6" },
+                },
+              }}
+            >
+              <Tab label={`Active Positions (${activePositions.length})`} />
+              <Tab label={`Selected Stocks Today (${selectedStocks.length})`} />
+              <Tab label={`Execution History (${tradeHistory.length})`} />
+            </Tabs>
+          </Box>
+
+          <Box sx={{ p: { xs: 2, md: 3 } }}>
+            {activeTab === 0 && (
+              <Box>
+                {activePositions.length === 0 ? (
+                  <Box sx={{ py: 6, textAlign: "center" }}>
+                    <Layers size={40} color="#475569" style={{ marginBottom: 12 }} />
+                    <Typography variant="h6" sx={{ color: "#94a3b8", fontWeight: 600 }}>
+                      No Active Positions
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#64748b", mt: 0.5 }}>
+                      The engine is monitoring the market and will enter trades on strategy signals.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Stack spacing={2}>
                     {activePositions.map((position) => (
-                      <ActivePositionCard 
-                        key={position.position_id} 
-                        position={position} 
-                        onClose={handleClosePosition} 
+                      <ActivePositionCard
+                        key={position.position_id || position.id}
+                        position={position}
+                        onClose={handleManualSquareOff}
                       />
                     ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="tw-text-center tw-py-16">
-                  <div className="tw-relative tw-w-24 tw-h-24 tw-mx-auto tw-mb-6">
-                    <svg className="tw-w-full tw-h-full tw-text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                    </svg>
-                  </div>
-                  <h3 className="tw-text-xl tw-font-bold tw-text-slate-300 tw-mb-2">No Active Positions</h3>
-                  <p className="tw-text-slate-500 tw-mb-6">Your trading positions will appear here in real-time</p>
-                  <div className="tw-inline-flex tw-items-center tw-gap-2 tw-px-6 tw-py-3 tw-bg-cyan-500/10 tw-border tw-border-cyan-500/30 tw-rounded-xl tw-text-cyan-300">
-                    <svg className="tw-w-5 tw-h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span className="tw-text-sm tw-font-semibold">Auto-trading active - Waiting for signals</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+                  </Stack>
+                )}
+              </Box>
+            )}
 
-          {/* Selected Stocks Tab */}
-          {activeTab === 1 && (
-            <div>
-              {stocksLoading ? (
-                <div className="tw-text-center tw-py-12">
-                  <div className="tw-animate-spin tw-rounded-full tw-h-12 tw-w-12 tw-border-b-2 tw-border-cyan-500 tw-mx-auto"></div>
-                  <p className="tw-text-slate-400 tw-mt-4">Loading selected stocks...</p>
-                </div>
-              ) : selectedStocks.length > 0 ? (
-                <div className="tw-space-y-3">
-                  {selectedStocks.map((stock, idx) => (
-                    <SelectedStockCard key={idx} stock={stock} />
-                  ))}
-                </div>
-              ) : (
-                <div className="tw-text-center tw-py-12">
-                  <svg className="tw-w-16 tw-h-16 tw-text-slate-600 tw-mx-auto tw-mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                  </svg>
-                  <p className="tw-text-slate-400 tw-text-lg">No stocks selected yet</p>
-                  <p className="tw-text-slate-500 tw-text-sm tw-mt-2">Stock selection runs automatically during market hours (9:00-9:15 AM)</p>
-                </div>
-              )}
-            </div>
-          )}
+            {activeTab === 1 && (
+              <Box>
+                {selectedStocks.length === 0 ? (
+                  <Box sx={{ py: 6, textAlign: "center" }}>
+                    <Activity size={40} color="#475569" style={{ marginBottom: 12 }} />
+                    <Typography variant="h6" sx={{ color: "#94a3b8", fontWeight: 600 }}>
+                      No Stocks Selected Yet
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "#64748b", mt: 0.5 }}>
+                      Automated market scanner runs at 8:30 AM & 9:15 AM to select top liquid options.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Grid container spacing={2}>
+                    {selectedStocks.map((stock, idx) => (
+                      <Grid item xs={12} md={6} key={stock.symbol || idx}>
+                        <SelectedStockCard stock={stock} />
+                      </Grid>
+                    ))}
+                  </Grid>
+                )}
+              </Box>
+            )}
 
-          {/* Trade History Tab */}
-          {activeTab === 2 && (
-            <div className="tw-overflow-x-auto">
-              {tradeHistory.length > 0 ? (
-                <table className="tw-w-full tw-text-xs md:tw-text-sm tw-text-left">
-                  <thead className="tw-text-xs tw-text-slate-400 tw-uppercase tw-bg-slate-800/80">
-                    <tr>
-                      <th className="tw-px-4 tw-py-3 tw-whitespace-nowrap">Date</th>
-                      <th className="tw-px-4 tw-py-3 tw-whitespace-nowrap">Instrument</th>
-                      <th className="tw-px-4 tw-py-3 tw-whitespace-nowrap">Strike</th>
-                      <th className="tw-px-4 tw-py-3 tw-whitespace-nowrap">Expiry</th>
-                      <th className="tw-px-4 tw-py-3 tw-whitespace-nowrap">Type</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Qty</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Buy Avg</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Sell Avg</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Gross P&L</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Charges</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">Net P&L</th>
-                      <th className="tw-px-4 tw-py-3 tw-text-right">% Chg</th>
-                    </tr>
-                  </thead>
-                  <tbody className="tw-divide-y tw-divide-slate-800">
-                    {tradeHistory.map((trade, idx) => {
-                      const isFailed = trade.status === "FAILED";
-                      const grossPnl = trade.gross_pnl || (trade.exit_price - trade.entry_price) * trade.quantity;
-                      // Calculate charges if not provided (Gross - Net)
-                      const charges = trade.gross_pnl && trade.net_pnl 
-                        ? trade.gross_pnl - trade.net_pnl 
-                        : Math.abs(grossPnl * 0.005); // Fallback est. 0.5%
-                      const netPnl = trade.net_pnl || (grossPnl - charges);
-                      const isProfit = !isFailed && netPnl >= 0;
+            {activeTab === 2 && (
+              <Box>
+                {tradeHistory.length === 0 ? (
+                  <Box sx={{ py: 6, textAlign: "center" }}>
+                    <Clock size={40} color="#475569" style={{ marginBottom: 12 }} />
+                    <Typography variant="h6" sx={{ color: "#94a3b8", fontWeight: 600 }}>
+                      No Trade Executions Today
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Stack spacing={1.5}>
+                    {tradeHistory.map((trade, idx) => (
+                      <Paper
+                        key={trade.trade_id || idx}
+                        elevation={0}
+                        sx={{
+                          p: 2,
+                          bgcolor: "rgba(15, 23, 42, 0.6)",
+                          borderRadius: "12px",
+                          border: "1px solid rgba(51, 65, 85, 0.4)",
+                        }}
+                      >
+                        <Grid container alignItems="center" spacing={2}>
+                          <Grid item xs={12} sm={3}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 800, color: "#ffffff" }}>
+                              {trade.symbol}
+                            </Typography>
+                            <Chip
+                              label={trade.signal_type || "BUY"}
+                              size="small"
+                              sx={{
+                                height: 20,
+                                fontSize: "0.7rem",
+                                fontWeight: 800,
+                                bgcolor: trade.signal_type?.includes("BUY") ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                                color: trade.signal_type?.includes("BUY") ? "#34d399" : "#f87171",
+                              }}
+                            />
+                          </Grid>
+                          <Grid item xs={6} sm={3}>
+                            <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                              Entry / Exit Price
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: "#e2e8f0" }}>
+                              ₹{parseFloat(trade.entry_price || 0).toFixed(2)} → ₹{parseFloat(trade.exit_price || trade.current_price || 0).toFixed(2)}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={6} sm={3}>
+                            <Typography variant="caption" sx={{ color: "#64748b", display: "block" }}>
+                              Quantity (Lots)
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 700, color: "#e2e8f0" }}>
+                              {trade.quantity} ({trade.lots_traded || Math.round(trade.quantity / (trade.lot_size || 1))} lots)
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={3} sx={{ textAlign: { sm: "right" } }}>
+                            <Typography
+                              variant="subtitle1"
+                              sx={{
+                                fontWeight: 900,
+                                color: (trade.pnl || trade.realized_pnl || 0) >= 0 ? "#10b981" : "#f43f5e",
+                              }}
+                            >
+                              {formatCurrency(trade.pnl || trade.realized_pnl || 0)}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: "#64748b" }}>
+                              {trade.entry_time ? new Date(trade.entry_time).toLocaleTimeString() : ""}
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+            )}
+          </Box>
+        </Paper>
 
-                      return (
-                        <tr key={idx} className={`tw-hover:bg-slate-800/30 tw-transition-colors ${isFailed ? 'tw-bg-rose-500/5' : ''}`}>
-                          <td className="tw-px-4 tw-py-3 tw-text-slate-400 tw-whitespace-nowrap">
-                            <div>{trade.entry_date || 'N/A'}</div>
-                            <div className="tw-text-[10px] tw-text-slate-600">{trade.entry_time_str?.split(' ')[0]}</div>
-                          </td>
-                          <td className="tw-px-4 tw-py-3">
-                            <div className="tw-font-bold tw-text-white">{trade.symbol}</div>
-                            {isFailed && <div className="tw-text-[9px] tw-text-rose-400 tw-font-bold">BLOCKED</div>}
-                          </td>
-                          <td className="tw-px-4 tw-py-3">
-                            <div className="tw-text-slate-300 tw-font-mono">{trade.strike_price} {trade.signal_type?.includes('CE') ? 'CE' : 'PE'}</div>
-                          </td>
-                          <td className="tw-px-4 tw-py-3">
-                            <div className="tw-text-slate-400 tw-text-[10px]">{trade.expiry_date || '-'}</div>
-                          </td>
-                          <td className="tw-px-4 tw-py-3">
-                            <span className={`tw-px-2 tw-py-0.5 tw-rounded tw-text-[10px] tw-font-bold tw-uppercase ${
-                              isFailed ? 'tw-bg-rose-600/20 tw-text-rose-400' :
-                              trade.signal_type?.includes('CE') ? 'tw-bg-emerald-500/10 tw-text-emerald-400' : 
-                              'tw-bg-rose-500/10 tw-text-rose-400'
-                            }`}>
-                              {isFailed ? 'FAILED' : (trade.signal_type?.includes('CE') ? 'CALL' : 'PUT')}
-                            </span>
-                          </td>
-                          <td className="tw-px-4 tw-py-3 tw-text-right tw-font-medium tw-text-slate-300">{isFailed ? '0' : trade.quantity}</td>
-                          <td className="tw-px-4 tw-py-3 tw-text-right tw-text-slate-300">{formatCurrency(trade.entry_price)}</td>
-                          <td className="tw-px-4 tw-py-3 tw-text-right tw-text-slate-300">{isFailed ? '-' : formatCurrency(trade.exit_price)}</td>
-                          
-                          {isFailed ? (
-                            <td colSpan="4" className="tw-px-4 tw-py-3 tw-text-right">
-                              <span className="tw-text-[10px] tw-text-rose-400 tw-font-medium italic">
-                                {trade.exit_reason || "Reason: Insufficient capital for 1 lot"}
-                              </span>
-                            </td>
-                          ) : (
-                            <>
-                              <td className={`tw-px-4 tw-py-3 tw-text-right ${grossPnl >= 0 ? 'tw-text-emerald-400' : 'tw-text-rose-400'}`}>
-                                {formatCurrency(grossPnl)}
-                              </td>
-                              <td className="tw-px-4 tw-py-3 tw-text-right tw-text-rose-300 tw-text-xs">
-                                {formatCurrency(charges)}
-                              </td>
-                              <td className={`tw-px-4 tw-py-3 tw-text-right tw-font-bold ${isProfit ? 'tw-text-emerald-400' : 'tw-text-rose-400'}`}>
-                                {formatCurrency(netPnl)}
-                              </td>
-                              <td className={`tw-px-4 tw-py-3 tw-text-right ${isProfit ? 'tw-text-emerald-400' : 'tw-text-rose-400'}`}>
-                                {formatPercentage(trade.pnl_percentage)}
-                              </td>
-                            </>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              ) : (
-                <div className="tw-text-center tw-py-12">
-                  <svg className="tw-w-16 tw-h-16 tw-text-slate-600 tw-mx-auto tw-mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                  </svg>
-                  <p className="tw-text-slate-400 tw-text-lg">No trade history available</p>
-                  <p className="tw-text-slate-500 tw-text-sm tw-mt-2">Completed trades will appear here</p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      {/* Live Trading Confirmation Modal */}
-      {showLiveConfirmation && (
-        <div className="tw-fixed tw-inset-0 tw-z-[100] tw-flex tw-items-center tw-justify-center tw-p-4 tw-bg-slate-950/80 tw-backdrop-blur-sm">
-          <div className="tw-bg-slate-900 tw-border tw-border-rose-500/30 tw-rounded-2xl tw-shadow-2xl tw-max-w-md tw-w-full tw-overflow-hidden tw-animate-in tw-fade-in tw-zoom-in-95 tw-duration-200">
-            <div className="tw-p-6">
-              <div className="tw-flex tw-items-center tw-gap-4 tw-mb-4">
-                <div className="tw-p-3 tw-bg-rose-500/10 tw-rounded-full tw-border tw-border-rose-500/20">
-                  <svg className="tw-w-8 tw-h-8 tw-text-rose-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="tw-text-xl tw-font-bold tw-text-white">Enable Live Trading?</h3>
-                  <p className="tw-text-rose-400 tw-text-sm tw-font-medium">Real Money Risk Warning</p>
-                </div>
-              </div>
-              
-              <div className="tw-space-y-4 tw-mb-6">
-                <p className="tw-text-slate-300 tw-text-sm tw-leading-relaxed">
-                  You are about to switch to <span className="tw-text-white tw-font-bold">LIVE TRADING</span> mode.
-                </p>
-                <div className="tw-bg-rose-500/5 tw-border tw-border-rose-500/20 tw-rounded-xl tw-p-4">
-                  <ul className="tw-space-y-2 tw-text-sm tw-text-slate-300">
-                    <li className="tw-flex tw-items-start tw-gap-2">
-                      <span className="tw-text-rose-500 tw-mt-0.5">•</span>
-                      Trades will be executed on your real broker account.
-                    </li>
-                    <li className="tw-flex tw-items-start tw-gap-2">
-                      <span className="tw-text-rose-500 tw-mt-0.5">•</span>
-                      Real funds will be used for all transactions.
-                    </li>
-                    <li className="tw-flex tw-items-start tw-gap-2">
-                      <span className="tw-text-rose-500 tw-mt-0.5">•</span>
-                      Profit and Loss will be real financial impact.
-                    </li>
-                  </ul>
-                </div>
-                <p className="tw-text-slate-400 tw-text-xs">
-                  Please ensure your risk management settings (Stop Loss, Max Daily Loss) are correctly configured before proceeding.
-                </p>
-              </div>
+        <AddFundsModal
+          isOpen={isAddFundsOpen}
+          onClose={() => setIsAddFundsOpen(false)}
+          onSuccess={fetchDashboardData}
+        />
 
-              <div className="tw-flex tw-gap-3">
-                <button
-                  onClick={() => setShowLiveConfirmation(false)}
-                  className="tw-flex-1 tw-py-3 tw-bg-slate-800 hover:tw-bg-slate-700 tw-text-slate-300 tw-rounded-xl tw-font-medium tw-transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => updateTradingMode("live")}
-                  className="tw-flex-1 tw-py-3 tw-bg-rose-600 hover:tw-bg-rose-700 tw-text-white tw-rounded-xl tw-font-bold tw-transition-colors tw-shadow-lg hover:tw-shadow-rose-900/20"
-                >
-                  Confirm Live Trading
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal */}
-      <AddFundsModal 
-        isOpen={isAddFundsOpen} 
-        onClose={() => setIsAddFundsOpen(false)} 
-        onFundAdded={() => {
-          fetchCapitalOverview();
-          handleManualRefresh();
-        }} 
-      />
-    </div>
+        <Dialog open={showEmergencyModal} onClose={() => setShowEmergencyModal(false)}>
+          <DialogTitle sx={{ bgcolor: "#131c2e", color: "#ffffff", fontWeight: 800 }}>
+            Confirm Emergency Exit
+          </DialogTitle>
+          <DialogContent sx={{ bgcolor: "#131c2e", color: "#94a3b8", pt: 2 }}>
+            This action will immediately square off ALL active option positions and cancel any pending orders. Are you sure?
+          </DialogContent>
+          <DialogActions sx={{ bgcolor: "#131c2e", p: 2 }}>
+            <Button onClick={() => setShowEmergencyModal(false)} sx={{ color: "#94a3b8" }}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              color="error"
+              onClick={handleEmergencyExit}
+              disabled={emergencyStopLoading}
+              sx={{ fontWeight: 700 }}
+            >
+              {emergencyStopLoading ? "Exiting..." : "Yes, Exit All Now"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Container>
+    </Box>
   );
 };
 

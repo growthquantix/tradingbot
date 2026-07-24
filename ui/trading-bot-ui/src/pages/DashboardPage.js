@@ -57,38 +57,38 @@ const MemoizedStocksListOptimized = React.memo(StocksListOptimized);
 const MemoizedStocksListWithLivePrices = React.memo(StocksListWithLivePrices);
 // MODERN THEME COLORS - Premium "Slate" Design System (Tailwind-inspired)
 const DASHBOARD_COLORS = {
-  // Dark theme (Slate/Zinc optimized)
+  // Dark theme (Slate/Obsidian optimized)
   dark: {
-    background: "#0f172a", // Slate 900 - Deeper, richer background
-    surface: "#1e293b", // Slate 800 - Subtle surface
-    surfaceHover: "#334155", // Slate 700
-    text: "#f1f5f9", // Slate 100 - Brighter text
+    background: "#0b0f19", // Obsidian Slate - Deep rich background
+    surface: "#131c2e",    // Slate Panel - Surface
+    surfaceHover: "#1e293b", // Slate 800
+    text: "#f8fafc",       // Slate 50 - High contrast
     textSecondary: "#94a3b8", // Slate 400
-    positive: "#10b981", // Emerald 500 - Modern Green
-    negative: "#ef4444", // Red 500 - Modern Red
-    neutral: "#f59e0b", // Amber 500
-    primary: "#3b82f6", // Blue 500
-    secondary: "#8b5cf6", // Violet 500
-    accent: "#06b6d4", // Cyan 500
-    border: "#334155", // Slate 700 - Slightly visible border
-    cardBackground: "#1e293b", // Keeping solid for now, or use #1e293b95 for glass
-    gradient: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
-    header: "#60a5fa", // Lighter blue for dark mode header text
+    positive: "#10b981",   // Emerald 500
+    negative: "#f43f5e",   // Rose 500
+    neutral: "#f59e0b",    // Amber 500
+    primary: "#3b82f6",    // Blue 500
+    secondary: "#8b5cf6",  // Violet 500
+    accent: "#06b6d4",     // Cyan 500
+    border: "#1e293b",     // Slate border
+    cardBackground: "#131c2e",
+    gradient: "linear-gradient(135deg, #0b0f19 0%, #131c2e 100%)",
+    header: "#60a5fa",
   },
-  // Light theme (Zinc optimized)
+  // Light theme
   light: {
-    background: "#f8fafc", // Slate 50
+    background: "#f8fafc",
     surface: "#ffffff",
-    surfaceHover: "#f1f5f9", // Slate 100
-    text: "#0f172a", // Slate 900
-    textSecondary: "#64748b", // Slate 500
-    positive: "#059669", // Emerald 600
-    negative: "#dc2626", // Red 600
-    neutral: "#d97706", // Amber 600
-    primary: "#2563eb", // Blue 600
-    secondary: "#7c3aed", // Violet 600
-    accent: "#0891b2", // Cyan 600
-    border: "#e2e8f0", // Slate 200
+    surfaceHover: "#f1f5f9",
+    text: "#0f172a",
+    textSecondary: "#64748b",
+    positive: "#059669",
+    negative: "#dc2626",
+    neutral: "#d97706",
+    primary: "#2563eb",
+    secondary: "#7c3aed",
+    accent: "#0891b2",
+    border: "#e2e8f0",
     cardBackground: "#ffffff",
     gradient: "linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)",
     header: "#2563eb",
