@@ -272,6 +272,80 @@ class StrategyEngine:
         # Always allow exit signals. Control/blocking logic is managed by pnl_tracker.py.
         return True, "Exit allowed: Control managed by pnl_tracker"
 
+    def get_market_direction(
+        self,
+        current_price: Decimal,
+        historical_data: Dict[str, List[float]],
+        symbol: str = "Unknown",
+    ) -> Dict[str, Any]:
+        """
+        Determine market direction from spot data — the single decision point for
+        choosing CE (bullish) vs PE (bearish) before any trade is attempted.
+
+        Runs the SuperTrend + EMA strategy ONCE and returns:
+          - "BULLISH"  → price trending up  → BUY CE option
+          - "BEARISH"  → price trending down → BUY PE option
+          - "NEUTRAL"  → no clear trend      → no new entries
+        Also returns pre-computed signals for both CE and PE so the caller can
+        pass them directly to _run_strategy_and_broadcast without re-computing.
+
+        Args:
+            current_price:   Latest spot price (Decimal)
+            historical_data: OHLCV dict with 'open','high','low','close','volume' lists
+            symbol:          Stock name for readable logs
+
+        Returns:
+            {
+              "direction":  "BULLISH" | "BEARISH" | "NEUTRAL",
+              "ce_signal":  TradingSignal,   # BUY / EXIT_LONG / HOLD for CE
+              "pe_signal":  TradingSignal,   # BUY / EXIT_LONG / HOLD for PE
+            }
+        """
+        try:
+            # Generate signals for both option types from the SAME spot candle data.
+            # CE: BUY when bullish conditions met; EXIT_LONG when bearish.
+            # PE: BUY when bearish conditions met; EXIT_LONG when bullish.
+            ce_signal = self.generate_signal(current_price, historical_data, "CE", symbol)
+            pe_signal = self.generate_signal(current_price, historical_data, "PE", symbol)
+
+            # Determine direction from signals:
+            #   CE BUY = bullish trend       → BULLISH
+            #   PE BUY = bearish trend       → BEARISH
+            #   both non-BUY / HOLD          → NEUTRAL
+            if ce_signal.signal_type == SignalType.BUY:
+                direction = "BULLISH"
+            elif pe_signal.signal_type == SignalType.BUY:
+                direction = "BEARISH"
+            else:
+                direction = "NEUTRAL"
+
+            logger.info(
+                f"📊 Market direction [{symbol}]: {direction} "
+                f"(CE={ce_signal.signal_type.value} {float(ce_signal.confidence):.2f}, "
+                f"PE={pe_signal.signal_type.value} {float(pe_signal.confidence):.2f})"
+            )
+
+            return {
+                "direction": direction,
+                "ce_signal": ce_signal,
+                "pe_signal": pe_signal,
+            }
+
+        except Exception as e:
+            logger.error(f"get_market_direction failed for {symbol}: {e}")
+            # Return neutral on error — never trade on uncertain signal
+            hold_signal = TradingSignal(
+                signal_type=SignalType.HOLD,
+                price=current_price,
+                entry_price=current_price,
+                stop_loss=current_price,
+                target_price=current_price,
+                confidence=Decimal("0.5"),
+                reason="Error in market direction computation",
+                timestamp=datetime.now().isoformat(),
+            )
+            return {"direction": "NEUTRAL", "ce_signal": hold_signal, "pe_signal": hold_signal}
+
     def generate_signal(
         self,
         current_price: Decimal,

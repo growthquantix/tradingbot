@@ -980,44 +980,126 @@ class AutoTradeLiveFeed:
                 spot_key=instrument_key, price=Decimal(str(ltp)), ohlc_data=ohlc_data
             )
 
-            # Run strategy for instruments ONLY when a new completed candle is detected
-            # Strategy requires: max(EMA period, SuperTrend period) + 10 = 30 candles
-            for instrument in shared_registry.instruments.values():
-                if instrument.spot_instrument_key == instrument_key:
-                    current_candle_count = len(instrument.historical_spot_data["close"])
+            # ──────────────────────────────────────────────────────────────────────
+            # STRATEGY DECISION: Process each STOCK once per candle.
+            #
+            # Old approach (replaced): loop per instrument (CE + PE), run strategy
+            #   independently on each → implicit CE/PE decision buried inside the loop.
+            #
+            # New approach: group instruments by stock symbol → run strategy ONCE →
+            #   get_market_direction() returns BULLISH / BEARISH / NEUTRAL →
+            #   explicitly select CE (bullish) or PE (bearish) instrument → execute.
+            #   Also handles exits: if BULLISH, trigger EXIT on any open PE position;
+            #   if BEARISH, trigger EXIT on any open CE position.
+            # ──────────────────────────────────────────────────────────────────────
 
-                    # FIX 4: Prevent startup trade burst
-                    # If this is the first time we see this instrument (count was 0),
-                    # initialize it to current history length so we only trigger on NEXT candle.
-                    if (
-                        instrument.last_processed_candle_count == 0
-                        and current_candle_count > 0
-                    ):
-                        instrument.last_processed_candle_count = current_candle_count
-                        logger.info(
-                            f"Initialized candle count for {instrument.stock_symbol} to {current_candle_count}"
+            # STEP A: Group all instruments for this spot key by stock symbol
+            # Structure: { "RELIANCE": {"CE": <instrument>, "PE": <instrument>}, ... }
+            stock_instrument_map: Dict[str, Dict[str, SharedInstrument]] = {}
+            for instr in list(shared_registry.instruments.values()):
+                if instr.spot_instrument_key != instrument_key:
+                    continue
+                sym = instr.stock_symbol
+                if sym not in stock_instrument_map:
+                    stock_instrument_map[sym] = {}
+                stock_instrument_map[sym][instr.option_type] = instr
+
+            # STEP B: Process each stock exactly ONCE
+            for stock_symbol, option_instruments in stock_instrument_map.items():
+
+                # Use any instrument's data — spot OHLC is shared across CE + PE
+                ref_instrument = (
+                    option_instruments.get("CE") or option_instruments.get("PE")
+                )
+                if ref_instrument is None:
+                    continue
+
+                current_candle_count = len(ref_instrument.historical_spot_data["close"])
+
+                # Startup guard: initialise candle counter on first tick so strategy
+                # only fires on NEXT completed candle, not immediately on startup.
+                if all(
+                    instr.last_processed_candle_count == 0
+                    for instr in option_instruments.values()
+                ) and current_candle_count > 0:
+                    for instr in option_instruments.values():
+                        instr.last_processed_candle_count = current_candle_count
+                    logger.info(
+                        f"Initialized candle count for {stock_symbol} to {current_candle_count}"
+                    )
+                    continue
+
+                # Check if a NEW completed candle has arrived
+                if current_candle_count <= ref_instrument.last_processed_candle_count:
+                    continue  # No new candle yet — skip
+
+                # Advance counter for all option types of this stock
+                for instr in option_instruments.values():
+                    instr.last_processed_candle_count = current_candle_count
+
+                if current_candle_count < 30:
+                    continue  # Not enough history for strategy
+
+                # ── SINGLE STRATEGY CALL ──────────────────────────────────────
+                # Determine market direction from spot data.
+                # BULLISH → buy CE  |  BEARISH → buy PE  |  NEUTRAL → no new entries
+                market = strategy_engine.get_market_direction(
+                    current_price=ref_instrument.live_spot_price,
+                    historical_data=ref_instrument.historical_spot_data,
+                    symbol=stock_symbol,
+                )
+                direction   = market["direction"]      # "BULLISH" | "BEARISH" | "NEUTRAL"
+                ce_signal   = market["ce_signal"]
+                pe_signal   = market["pe_signal"]
+
+                # ── ENTRY: Select the instrument aligned with current sentiment ─
+                if direction == "BULLISH":
+                    entry_type  = "CE"
+                    entry_signal = ce_signal
+                    exit_type   = "PE"     # exit any opposite-side position
+                    exit_signal  = pe_signal
+                elif direction == "BEARISH":
+                    entry_type  = "PE"
+                    entry_signal = pe_signal
+                    exit_type   = "CE"     # exit any opposite-side position
+                    exit_signal  = ce_signal
+                else:
+                    # NEUTRAL — no new entries; exits handled by pnl_tracker
+                    logger.debug(f"NEUTRAL signal for {stock_symbol} — no action")
+                    continue
+
+                # ── EXIT: Trigger fast-exit on the opposite-side instrument ──
+                exit_instrument = option_instruments.get(exit_type)
+                if exit_instrument:
+                    if exit_signal.signal_type in (SignalType.EXIT_LONG, SignalType.EXIT_SHORT):
+                        await self._run_strategy_and_broadcast(
+                            exit_instrument,
+                            pre_computed_spot_signal=exit_signal,
                         )
-                        continue
 
-                    # Check if we have a new completed candle since last run
-                    if current_candle_count > instrument.last_processed_candle_count:
-                        instrument.last_processed_candle_count = current_candle_count
-                        if current_candle_count >= 30:
-                            # REAL-TIME ATM CHECK: Before running strategy, verify that
-                            # the registered option strike is still the ATM. If spot has
-                            # moved significantly, refresh to the current ATM strike so
-                            # entries use maximum-delta options, not stale OTM options.
-                            was_refreshed = await self._refresh_atm_if_drifted(instrument)
-                            if was_refreshed:
-                                # ATM changed — WebSocket re-subscribed to new key.
-                                # Skip strategy this cycle; wait for live data on new strike.
-                                logger.info(
-                                    f"Skipping strategy for {instrument.stock_symbol} "
-                                    f"[{instrument.option_type}] — ATM refreshed, "
-                                    f"waiting for fresh premium data on new strike"
-                                )
-                                continue
-                            await self._run_strategy_and_broadcast(instrument)
+                # ── ENTRY: Execute on the direction-aligned instrument ─────────
+                entry_instrument = option_instruments.get(entry_type)
+                if entry_instrument is None:
+                    logger.warning(
+                        f"No {entry_type} instrument registered for {stock_symbol} — "
+                        f"cannot enter {direction} trade"
+                    )
+                    continue
+
+                # ATM drift check: if market has moved, refresh to current ATM
+                # before placing the entry. Returns True → skip this cycle.
+                was_refreshed = await self._refresh_atm_if_drifted(entry_instrument)
+                if was_refreshed:
+                    logger.info(
+                        f"Skipping {direction} entry for {stock_symbol} [{entry_type}] "
+                        f"— ATM refreshed, waiting for fresh premium on new strike"
+                    )
+                    continue
+
+                await self._run_strategy_and_broadcast(
+                    entry_instrument,
+                    pre_computed_spot_signal=entry_signal,
+                )
 
         except Exception:
             logger.exception("Error updating shared spot data")
@@ -1104,12 +1186,19 @@ class AutoTradeLiveFeed:
     # STRATEGY EXECUTION (COMMON LAYER - Signal Generation)
     # ============================================================================
 
-    async def _run_strategy_and_broadcast(self, instrument: SharedInstrument):
+    async def _run_strategy_and_broadcast(
+        self,
+        instrument: SharedInstrument,
+        pre_computed_spot_signal=None,  # TradingSignal — pass from get_market_direction() to avoid re-computing
+    ):
         """
         Run strategy on shared instrument and broadcast signal to ALL subscribed users
 
         Args:
-            instrument: Shared instrument
+            instrument:              Shared instrument
+            pre_computed_spot_signal: If provided (from get_market_direction), use this
+                                      instead of re-running generate_signal(). Avoids
+                                      computing SuperTrend+EMA twice per stock per candle.
         """
         try:
             # CRITICAL: Check if market is open before generating signals
@@ -1119,13 +1208,16 @@ class AutoTradeLiveFeed:
                 )
                 return
 
-            # STEP 1: Generate SPOT-BASED signal (trend detection on underlying)
-            spot_signal = strategy_engine.generate_signal(
-                current_price=instrument.live_spot_price,
-                historical_data=instrument.historical_spot_data,
-                option_type=instrument.option_type,
-                symbol=instrument.stock_symbol,   # ISSUE-C FIX: readable signal logs
-            )
+            # STEP 1: Use pre-computed signal if provided; otherwise generate fresh
+            if pre_computed_spot_signal is not None:
+                spot_signal = pre_computed_spot_signal
+            else:
+                spot_signal = strategy_engine.generate_signal(
+                    current_price=instrument.live_spot_price,
+                    historical_data=instrument.historical_spot_data,
+                    option_type=instrument.option_type,
+                    symbol=instrument.stock_symbol,
+                )
 
             # STEP 2: Convert SPOT signal to PREMIUM signal (for actual trading)
             # This is CRITICAL: Strategy runs on spot for trend, but we trade options
