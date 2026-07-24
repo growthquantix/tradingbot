@@ -65,7 +65,6 @@ const AutoTradingPage = () => {
   const [emergencyStopLoading, setEmergencyStopLoading] = useState(false);
   const [autoTradingRunning, setAutoTradingRunning] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
-  const [showLiveConfirmation, setShowLiveConfirmation] = useState(false);
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [isAddFundsOpen, setIsAddFundsOpen] = useState(false);
 
