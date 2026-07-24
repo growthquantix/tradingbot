@@ -258,7 +258,7 @@ const AutoTradingPage = () => {
                   </Button>
                   <Button
                     size="small"
-                    onClick={() => setShowLiveConfirmation(true)}
+                    onClick={() => setTradingMode("live")}
                     sx={{
                       px: 2,
                       py: 0.8,
