@@ -8,9 +8,7 @@ import {
   Button,
   Stack,
   Grid,
-  Card,
   CardContent,
-  Alert,
   Chip,
   useTheme,
   useMediaQuery,
@@ -42,11 +40,11 @@ import {
   Warning,
   ExpandMore,
   Security,
-  TrendingDown,
   Timeline,
 } from "@mui/icons-material";
 import apiClient from "../services/api";
 import SelectedStocksPanel from "../components/trading/SelectedStocksPanel";
+
 
 const TradeControlForm = () => {
   const [stockSymbol, setStockSymbol] = useState("");
