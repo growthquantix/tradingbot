@@ -219,6 +219,99 @@ class NativeAIAgentEngine:
                 gating_passed=True,
             )
 
+    def classify_oi_buildup(
+        self,
+        price_change_pct: float,
+        oi_change_pct: float
+    ) -> Dict[str, Any]:
+        """
+        Classify real-time Open Interest (OI) buildup pattern.
+
+        Returns:
+            Dict with buildup_type, sentiment_signal, and score_modifier (-0.2 to +0.2)
+        """
+        try:
+            if price_change_pct > 0 and oi_change_pct > 0:
+                return {"type": "LONG_BUILDUP", "signal": "BULLISH", "score_modifier": 0.2, "description": "Strong buying with institutional OI expansion"}
+            elif price_change_pct > 0 and oi_change_pct < 0:
+                return {"type": "SHORT_COVERING", "signal": "BULLISH", "score_modifier": 0.1, "description": "Shorts liquidating position"}
+            elif price_change_pct < 0 and oi_change_pct > 0:
+                return {"type": "SHORT_BUILDUP", "signal": "BEARISH", "score_modifier": -0.2, "description": "Aggressive short creation"}
+            elif price_change_pct < 0 and oi_change_pct < 0:
+                return {"type": "LONG_UNWINDING", "signal": "BEARISH", "score_modifier": -0.1, "description": "Longs closing position"}
+            return {"type": "NEUTRAL", "signal": "NEUTRAL", "score_modifier": 0.0, "description": "Consolidation"}
+        except Exception as e:
+            logger.error(f"Error classifying OI buildup: {e}")
+            return {"type": "NEUTRAL", "signal": "NEUTRAL", "score_modifier": 0.0, "description": str(e)}
+
+    def predict_dynamic_target_and_exit(
+        self,
+        confidence_score: float,
+        entry_price: float
+    ) -> Dict[str, Any]:
+        """
+        Predict dynamic target price multiplier and exit strategy based on AI conviction score.
+
+        High Conviction (>= 85%): Wider target (1:2.5 Risk-Reward) + trailing profit lock.
+        Moderate Conviction (75% - 84%): Scalp target (1:1.5 Risk-Reward) for fast profit lock.
+        """
+        if confidence_score >= 85.0:
+            target_pct = 0.08  # 8% target on option premium
+            stop_loss_pct = 0.03  # 3% SL
+            trail_step = 0.02
+            strategy_type = "TREND_RUNNER"
+        else:
+            target_pct = 0.04  # 4% quick scalp target
+            stop_loss_pct = 0.02  # 2% SL
+            trail_step = 0.01
+            strategy_type = "FAST_SCALP"
+
+        target_price = round(entry_price * (1 + target_pct), 2)
+        stop_loss_price = round(entry_price * (1 - stop_loss_pct), 2)
+
+        return {
+            "strategy_type": strategy_type,
+            "target_price": target_price,
+            "stop_loss_price": stop_loss_price,
+            "target_pct": target_pct * 100,
+            "stop_loss_pct": stop_loss_pct * 100,
+            "trail_step_pct": trail_step * 100
+        }
+
+    def scan_fno_market_sentiment(
+        self,
+        fno_ticks: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Scan all real-time F&O stock ticks in parallel, calculate AI conviction scores,
+        and return ranked high-probability stock candidates.
+        """
+        ranked_candidates = []
+        for tick in fno_ticks:
+            symbol = tick.get("symbol", "")
+            price = float(tick.get("ltp", 0.0))
+            price_change = float(tick.get("price_change_pct", 0.0))
+            oi_change = float(tick.get("oi_change_pct", 0.0))
+
+            oi_info = self.classify_oi_buildup(price_change, oi_change)
+            base_score = 50.0 + (price_change * 5.0) + (oi_info["score_modifier"] * 100.0)
+            score = float(np.clip(base_score, 0.0, 100.0))
+
+            if score >= self.min_confidence_threshold:
+                ranked_candidates.append({
+                    "symbol": symbol,
+                    "price": price,
+                    "ai_score": round(score, 1),
+                    "sentiment": oi_info["signal"],
+                    "buildup_type": oi_info["type"],
+                    "description": oi_info["description"]
+                })
+
+        # Sort descending by AI confidence score
+        ranked_candidates.sort(key=lambda x: x["ai_score"], reverse=True)
+        return ranked_candidates
+
 
 # Global Singleton Instance
 ai_agent_engine = NativeAIAgentEngine()
+
