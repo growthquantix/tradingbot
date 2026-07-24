@@ -376,7 +376,7 @@ class TradingCapitalManager:
 
             allocated_capital = position_value_per_lot * Decimal(str(recommended_lots))
             capital_utilization = (allocated_capital / available_capital) * Decimal('100')
-            risk_per_trade = (risk_per_lot * Decimal(str(recommended_lots)) / available_capital) * Decimal('100')
+            risk_per_trade = (risk_per_lot * Decimal(str(recommended_lots)) / risk_base) * Decimal('100')
 
             allocation = CapitalAllocation(
                 total_capital=available_capital,
