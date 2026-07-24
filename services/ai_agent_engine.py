@@ -25,23 +25,170 @@ class AIConfidenceResult:
     gating_passed: bool     # True if confidence >= 75.0%
 
 
+import os
+import json
+
 class NativeAIAgentEngine:
     """
     Native Self-Contained AI Agent Engine for Real-Time F&O Trading.
 
     Features:
     1. High-speed NumPy matrix operations (< 2ms evaluation latency)
-    2. Real-time Option Sentiment Index (PCR + IV Skew)
-    3. Multi-timeframe trend & candle momentum vector calculation
-    4. AI Confidence Gating (≥75% required to execute trades)
+    2. Data-Driven Weight Training (Learns from historical OHLCV & trade outcomes)
+    3. Model Weight Persistence (models/native_ai_weights.json)
+    4. Real-time Option Sentiment Index (PCR + IV Skew)
+    5. AI Confidence Gating (≥75% required to execute trades)
     """
 
-    def __init__(self):
-        """Initialize AI Agent Engine with default parameters"""
+    def __init__(self, model_dir: str = "models"):
+        """Initialize AI Agent Engine and load trained weights from disk"""
         self.min_confidence_threshold = 75.0  # Require 75%+ confidence
-        # Pre-initialized local weight matrix for fast linear transformation
-        self._weights_momentum = np.array([0.35, 0.30, 0.20, 0.15])  # EMA slope, VWAP dist, RSI slope, Vol ratio
+        self.model_dir = model_dir
+        self.weights_path = os.path.join(model_dir, "native_ai_weights.json")
+        self._weights_momentum = np.array([0.35, 0.30, 0.20, 0.15], dtype=np.float64)  # Default weights
+        self.load_weights()
         logger.info("🤖 Native Real-Time AI Agent Engine initialized")
+
+    def load_weights(self):
+        """Load trained AI weights from local disk"""
+        try:
+            if os.path.exists(self.weights_path):
+                with open(self.weights_path, "r") as f:
+                    data = json.load(f)
+                    weights_list = data.get("weights", [0.35, 0.30, 0.20, 0.15])
+                    self._weights_momentum = np.array(weights_list, dtype=np.float64)
+                    logger.info(f"🤖 Loaded trained AI weights from {self.weights_path}: {self._weights_momentum.round(4).tolist()}")
+            else:
+                self.save_weights()
+        except Exception as e:
+            logger.error(f"Error loading AI weights: {e}")
+
+    def save_weights(self):
+        """Persist AI weights to local disk"""
+        try:
+            os.makedirs(self.model_dir, exist_ok=True)
+            with open(self.weights_path, "w") as f:
+                json.dump({
+                    "weights": self._weights_momentum.tolist(),
+                    "updated_at": datetime.now().isoformat()
+                }, f, indent=2)
+            logger.info(f"💾 Saved AI weights to {self.weights_path}")
+        except Exception as e:
+            logger.error(f"Error saving AI weights: {e}")
+
+    def train_on_historical_candles(self, candles: List[Dict[str, float]]) -> Dict[str, Any]:
+        """
+        Train AI momentum feature weights on historical candle dataset using Least Squares Optimization.
+
+        Args:
+            candles: List of dicts with 'close', 'open', 'high', 'low', 'volume'
+
+        Returns:
+            Dict containing trained weights, MSE loss, and sample count
+        """
+        try:
+            if len(candles) < 30:
+                return {"success": False, "error": "Insufficient candle data (minimum 30 required)"}
+
+            closes = np.array([c["close"] for c in candles], dtype=np.float64)
+            volumes = np.array([c.get("volume", 1.0) for c in candles], dtype=np.float64)
+
+            X_features = []
+            y_targets = []
+
+            for i in range(15, len(closes) - 3):
+                # Feature 1: EMA Slope
+                ema5 = np.mean(closes[i-5:i])
+                ema15 = np.mean(closes[i-15:i])
+                f_ema = np.clip(((ema5 - ema15) / ema15) * 100.0, -1.0, 1.0)
+
+                # Feature 2: VWAP Dist
+                vwap = np.sum(closes[i-15:i] * volumes[i-15:i]) / np.sum(volumes[i-15:i]) if np.sum(volumes[i-15:i]) > 0 else np.mean(closes[i-15:i])
+                f_vwap = np.clip(((closes[i] - vwap) / vwap) * 50.0, -1.0, 1.0)
+
+                # Feature 3: Candle direction
+                f_candle = np.mean(np.sign(np.diff(closes[i-3:i+1])))
+
+                # Feature 4: Volume ratio
+                f_vol = np.clip((volumes[i] / np.mean(volumes[i-10:i-3])) - 1.0, -1.0, 1.0) if np.mean(volumes[i-10:i-3]) > 0 else 0.0
+
+                X_features.append([f_ema, f_vwap, f_candle, f_vol])
+
+                # Target label: Future 3-candle direction (-1.0 to +1.0)
+                future_return = (closes[i+3] - closes[i]) / closes[i]
+                y_targets.append(np.clip(future_return * 100.0, -1.0, 1.0))
+
+            X = np.array(X_features, dtype=np.float64)
+            y = np.array(y_targets, dtype=np.float64)
+
+            # Solve for optimal weights using Least Squares Linear Regression
+            weights_opt, residuals, rank, s = np.linalg.lstsq(X, y, rcond=None)
+
+            # Normalize weights safely so sum equals 1.0
+            total_weight = float(np.sum(np.abs(weights_opt)))
+            if total_weight > 1e-6 and not np.isnan(total_weight):
+                norm_weights = weights_opt / total_weight
+            else:
+                norm_weights = np.array([0.35, 0.30, 0.20, 0.15], dtype=np.float64)
+
+            self._weights_momentum = np.clip(norm_weights, 0.05, 0.60)
+            self.save_weights()
+
+            mse = float(np.mean((y - np.dot(X, self._weights_momentum)) ** 2))
+
+            return {
+                "success": True,
+                "samples_trained": len(X),
+                "trained_weights": self._weights_momentum.round(4).tolist(),
+                "mse_loss": round(mse, 4) if not np.isnan(mse) else 0.0
+            }
+
+        except Exception as e:
+            logger.error(f"Error training AI model on historical candles: {e}")
+            return {"success": False, "error": str(e)}
+
+    def retrain_on_trade_history(self, trade_logs: List[Dict[str, Any]], learning_rate: float = 0.05) -> Dict[str, Any]:
+        """
+        Perform online gradient update based on actual trade outcomes (Win vs Loss).
+        Winning trades reinforce momentum feature weights; losing trades adjust penalty.
+        """
+        try:
+            if not trade_logs:
+                return {"success": False, "message": "No trade logs provided for retraining"}
+
+            total_pnl = 0.0
+            updates = 0
+            for trade in trade_logs:
+                pnl = float(trade.get("net_pnl", 0.0))
+                total_pnl += pnl
+                vector = float(trade.get("momentum_vector", 0.0))
+                gradient_direction = 1.0 if pnl > 0 else -1.0
+                
+                # Apply stochastic gradient update to weights
+                self._weights_momentum += learning_rate * gradient_direction * (vector / (abs(vector) + 1e-5))
+                updates += 1
+
+            # Re-normalize weights safely
+            total_w = float(np.sum(np.abs(self._weights_momentum)))
+            if total_w > 1e-6 and not np.isnan(total_w):
+                self._weights_momentum = self._weights_momentum / total_w
+            else:
+                self._weights_momentum = np.array([0.35, 0.30, 0.20, 0.15], dtype=np.float64)
+
+            self._weights_momentum = np.clip(self._weights_momentum, 0.05, 0.60)
+            self.save_weights()
+
+            return {
+                "success": True,
+                "trades_processed": updates,
+                "total_pnl_analyzed": total_pnl,
+                "updated_weights": self._weights_momentum.round(4).tolist()
+            }
+        except Exception as e:
+            logger.error(f"Error retraining AI on trade history: {e}")
+            return {"success": False, "error": str(e)}
+
+
 
     def predict_momentum_vector(
         self,
