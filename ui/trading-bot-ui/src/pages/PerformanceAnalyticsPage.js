@@ -839,11 +839,11 @@ const PerformanceAnalyticsPage = () => {
               <div className="tw-p-6 tw-border-b tw-border-slate-800 tw-flex tw-flex-col sm:tw-flex-row tw-justify-between tw-items-center tw-gap-4">
                 <div>
                   <h2 className="tw-text-xl tw-font-bold tw-text-white">Trade Ledger</h2>
-                  <span className="tw-text-xs tw-text-slate-500 tw-uppercase tw-tracking-wider">Statement</span>
+                  <span className="tw-text-xs tw-text-slate-500 tw-uppercase tw-tracking-wider">Statement & Audit Trail</span>
                 </div>
                 
                 <div className="tw-flex tw-flex-wrap tw-items-center tw-gap-3">
-                  <div className="tw-flex tw-items-center tw-gap-2 tw-bg-slate-800/50 tw-p-1 tw-rounded-lg tw-border tw-border-slate-700">
+                  <div className="tw-flex tw-items-center tw-gap-2 tw-bg-slate-800/50 tw-p-1.5 tw-rounded-xl tw-border tw-border-slate-700">
                     <input 
                       type="date" 
                       value={startDate} 
@@ -862,7 +862,7 @@ const PerformanceAnalyticsPage = () => {
                   <button 
                     onClick={handleExport}
                     disabled={tradeList.length === 0}
-                    className="tw-flex tw-items-center tw-gap-2 tw-px-3 tw-py-1.5 tw-bg-emerald-500/10 tw-text-emerald-400 tw-border tw-border-emerald-500/20 tw-rounded-lg hover:tw-bg-emerald-500/20 tw-transition-all disabled:tw-opacity-50 disabled:tw-cursor-not-allowed"
+                    className="tw-flex tw-items-center tw-gap-2 tw-px-4 tw-py-2 tw-bg-emerald-500/10 tw-text-emerald-400 tw-border tw-border-emerald-500/20 tw-rounded-xl hover:tw-bg-emerald-500/20 tw-transition-all disabled:tw-opacity-50 disabled:tw-cursor-not-allowed"
                   >
                     <svg className="tw-w-4 tw-h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -871,7 +871,57 @@ const PerformanceAnalyticsPage = () => {
                   </button>
                 </div>
               </div>
-              <div className="tw-overflow-x-auto">
+
+              {/* Mobile View: Trade Cards (Visible only on mobile md:hidden) */}
+              <div className="md:tw-hidden tw-p-4 tw-space-y-3">
+                {tradeList.length > 0 ? (
+                  tradeList.map((trade, idx) => {
+                    const grossPnl = trade.gross_pnl || (trade.exit_price - trade.entry_price) * trade.quantity;
+                    const charges = trade.gross_pnl && trade.net_pnl 
+                      ? trade.gross_pnl - trade.net_pnl 
+                      : Math.abs(grossPnl * 0.005); 
+                    const netPnl = trade.net_pnl || (grossPnl - charges);
+                    const isProfit = netPnl >= 0;
+                    const optionType = trade.signal_type?.includes('CE') ? 'CE' : trade.signal_type?.includes('PE') ? 'PE' : 'EQ';
+                    const exitType = trade.exit_type || (netPnl > 0 ? 'TARGET' : 'SL');
+
+                    return (
+                      <div key={idx} className="tw-bg-slate-900/60 tw-border tw-border-slate-800/80 tw-rounded-xl tw-p-4 tw-space-y-3">
+                        <div className="tw-flex tw-items-center tw-justify-between">
+                          <div className="tw-flex tw-items-center tw-gap-2">
+                            <span className="tw-font-bold tw-text-white tw-text-sm">{trade.symbol}</span>
+                            <span className={`tw-px-2 tw-py-0.5 tw-rounded tw-text-[10px] tw-font-bold ${
+                              optionType === 'CE' ? 'tw-bg-emerald-500/20 tw-text-emerald-400' : 'tw-bg-rose-500/20 tw-text-rose-400'
+                            }`}>
+                              {trade.strike_price ? `${trade.strike_price} ${optionType}` : optionType}
+                            </span>
+                          </div>
+                          <span className={`tw-font-bold tw-text-sm ${isProfit ? 'tw-text-emerald-400' : 'tw-text-rose-400'}`}>
+                            {format_currency(netPnl)}
+                          </span>
+                        </div>
+
+                        <div className="tw-grid tw-grid-cols-2 tw-gap-2 tw-text-xs tw-text-slate-400">
+                          <div>Buy: <span className="tw-text-slate-200 tw-font-semibold">{format_currency(trade.entry_price)}</span></div>
+                          <div>Sell: <span className="tw-text-slate-200 tw-font-semibold">{format_currency(trade.exit_price)}</span></div>
+                          <div>Qty: <span className="tw-text-slate-200 tw-font-semibold">{trade.quantity}</span></div>
+                          <div>Status: <span className={`tw-font-bold ${isProfit ? 'tw-text-emerald-400' : 'tw-text-rose-400'}`}>{exitType}</span></div>
+                        </div>
+
+                        <div className="tw-text-[10px] tw-text-slate-500 tw-flex tw-items-center tw-justify-between tw-pt-2 tw-border-t tw-border-slate-800">
+                          <span>{trade.entry_date}</span>
+                          <span>{trade.entry_time_str?.split(' ')[0]}</span>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="tw-text-center tw-py-8 tw-text-slate-500 tw-text-xs">No trades found in ledger</div>
+                )}
+              </div>
+
+              {/* Desktop View: Full Demat Table (Hidden on mobile hidden md:block) */}
+              <div className="tw-hidden md:tw-block tw-overflow-x-auto">
                 <table className="tw-w-full tw-text-xs md:tw-text-sm tw-text-left">
                   <thead className="tw-text-xs tw-text-slate-400 tw-uppercase tw-bg-slate-800/80">
                     <tr>
@@ -918,7 +968,7 @@ const PerformanceAnalyticsPage = () => {
                           <React.Fragment key={idx}>
                            {showDateHeader && (
                              <tr key={`header-${idx}`} className="tw-bg-slate-800/50">
-                               <td colSpan="11" className="tw-px-4 tw-py-2 tw-text-xs tw-font-bold tw-text-cyan-400 tw-uppercase tw-tracking-wider">
+                               <td colSpan="12" className="tw-px-4 tw-py-2 tw-text-xs tw-font-bold tw-text-cyan-400 tw-uppercase tw-tracking-wider">
                                  {trade.entry_date}
                                </td>
                              </tr>
@@ -968,7 +1018,7 @@ const PerformanceAnalyticsPage = () => {
                       })
                     ) : (
                       <tr>
-                        <td colSpan="11" className="tw-px-6 tw-py-12 tw-text-center tw-text-slate-500">
+                        <td colSpan="12" className="tw-px-6 tw-py-12 tw-text-center tw-text-slate-500">
                           <div className="tw-flex tw-flex-col tw-items-center tw-justify-center">
                             <svg className="tw-w-12 tw-h-12 tw-mb-3 tw-opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
@@ -983,6 +1033,7 @@ const PerformanceAnalyticsPage = () => {
               </div>
             </div>
           </div>
+
         )}
       </div>
     </div>
