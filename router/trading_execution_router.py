@@ -1929,3 +1929,46 @@ async def get_fund_statement(
     except Exception as e:
         logger.error(f"Error fetching statement: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/eod-report")
+async def get_eod_report(
+    target_date: Optional[date] = Query(None, description="Report date YYYY-MM-DD"),
+    trading_mode: Optional[str] = Query(None, description="paper or live or ALL"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate End-Of-Day performance summary report"""
+    try:
+        from services.eod_report_service import eod_report_service
+        report = eod_report_service.generate_eod_report(
+            db=db,
+            user_id=current_user.id,
+            target_date=target_date,
+            trading_mode=trading_mode
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        logger.error(f"Error generating EOD report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/eod-report/send-telegram")
+async def send_eod_telegram_report(
+    target_date: Optional[date] = Query(None, description="Report date YYYY-MM-DD"),
+    trading_mode: Optional[str] = Query(None, description="paper or live or ALL"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate and dispatch EOD performance summary to Telegram"""
+    try:
+        from services.eod_report_service import eod_report_service
+        success = await eod_report_service.send_eod_telegram_report(
+            db=db,
+            user_id=current_user.id,
+            target_date=target_date,
+            trading_mode=trading_mode
+        )
+        return {"success": success, "message": "EOD report dispatched to Telegram" if success else "Failed to dispatch Telegram report"}
+    except Exception as e:
+        logger.error(f"Error sending EOD report to Telegram: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
