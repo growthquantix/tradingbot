@@ -1,0 +1,13 @@
+[build]
+  command = "npm run build"
+  publish = "build"
+
+[build.environment]
+  NODE_VERSION = "18"
+  CI = "false"
+
+# Single-Page Application (SPA) Routing Rule for React Router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

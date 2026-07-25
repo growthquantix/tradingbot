@@ -1,0 +1,28 @@
+name: Oracle Cloud & Netlify CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - feature-branch
+
+jobs:
+  deploy-oracle-cloud:
+    name: Deploy Backend & Engine to Oracle Cloud ARM 24/7
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@v4
+
+      - name: SSH & Deploy to Oracle Cloud Instance
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          script: |
+            cd tradingbot || git clone https://github.com/growthquantix/tradingbot.git tradingbot && cd tradingbot
+            git pull origin feature-branch
+            docker-compose up -d --build
+            docker system prune -f
