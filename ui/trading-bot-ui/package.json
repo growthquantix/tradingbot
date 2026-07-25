@@ -35,6 +35,14 @@
     "web-vitals": "^4.2.4",
     "zustand": "^5.0.2"
   },
+  "overrides": {
+    "ws": "^8.17.1",
+    "qs": "^6.12.0",
+    "shell-quote": "^1.8.1",
+    "serialize-javascript": "^6.0.2",
+    "websocket-driver": "^0.7.4",
+    "yaml": "^2.3.4"
+  },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
