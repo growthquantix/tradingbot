@@ -1,3 +1,6 @@
+/* Import Google Fonts - Outfit & Inter for hyper-crisp financial typography */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 /* Import global responsive framework */
 @import './styles/responsive.css';
 
@@ -9,17 +12,26 @@
 /* Custom dark theme utilities for Tailwind pages */
 @layer utilities {
   .dark-theme {
-    @apply tw-bg-slate-900 tw-text-white;
+    @apply tw-bg-[#0b0f19] tw-text-white;
   }
 
   .card-gradient {
-    @apply tw-bg-gradient-to-br tw-from-slate-800 tw-to-slate-900;
+    @apply tw-bg-gradient-to-br tw-from-slate-900/90 tw-via-[#131c2e] tw-to-slate-950;
   }
 
   .glass-card {
-    background: rgba(19, 28, 46, 0.7);
-    backdrop-filter: blur(12px);
+    background: rgba(19, 28, 46, 0.65);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .premium-glass-card {
+    background: linear-gradient(135deg, rgba(19, 28, 46, 0.8) 0%, rgba(11, 15, 25, 0.9) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
   }
 
   .glass-panel {
@@ -28,30 +40,50 @@
     border: 1px solid rgba(51, 65, 85, 0.5);
   }
 
+  .neon-border-emerald {
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+  }
+
+  .neon-border-cyan {
+    border: 1px solid rgba(6, 182, 212, 0.4);
+    box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
+  }
+
+  .neon-border-rose {
+    border: 1px solid rgba(244, 63, 94, 0.4);
+    box-shadow: 0 0 15px rgba(244, 63, 94, 0.2);
+  }
+
+  .crystal-text-gradient {
+    @apply tw-bg-gradient-to-r tw-from-white tw-via-slate-200 tw-to-slate-400 tw-bg-clip-text tw-text-transparent;
+  }
+
   .glow-success {
-    box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
   }
 
   .glow-error {
-    box-shadow: 0 0 15px rgba(244, 63, 94, 0.25);
+    box-shadow: 0 0 20px rgba(244, 63, 94, 0.3);
   }
 
   .glow-primary {
-    box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+    box-shadow: 0 0 25px rgba(6, 182, 212, 0.35);
   }
 
   .success-gradient {
-    @apply tw-bg-gradient-to-br tw-from-success-500/10 tw-to-success-600/5;
+    @apply tw-bg-gradient-to-br tw-from-emerald-500/15 tw-to-emerald-600/5;
   }
 
   .error-gradient {
-    @apply tw-bg-gradient-to-br tw-from-error-500/10 tw-to-error-600/5;
+    @apply tw-bg-gradient-to-br tw-from-rose-500/15 tw-to-rose-600/5;
   }
 
   .primary-gradient {
-    @apply tw-bg-gradient-to-br tw-from-primary-500/10 tw-to-primary-600/5;
+    @apply tw-bg-gradient-to-br tw-from-cyan-500/15 tw-to-cyan-600/5;
   }
 }
+
 
 /* Pulse animation for active live indicators */
 @keyframes pulse-green {
