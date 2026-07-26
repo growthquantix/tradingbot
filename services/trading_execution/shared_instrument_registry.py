@@ -507,3 +507,4 @@ class SharedInstrumentRegistry:
 
 # Singleton instance
 shared_registry = SharedInstrumentRegistry()
+shared_instrument_registry = shared_registry
