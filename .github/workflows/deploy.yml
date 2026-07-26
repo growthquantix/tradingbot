@@ -108,16 +108,17 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             sudo docker compose -f docker-compose.prod.yml pull
-            sudo docker compose -f docker-compose.prod.yml down --remove-orphans || true
+            sudo docker compose -f docker-compose.prod.yml stop backend || true
+            sudo docker compose -f docker-compose.prod.yml rm -f backend || true
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
             
-            echo "⏳ Waiting for backend health check (up to 30 seconds)..."
+            echo "⏳ Waiting for backend health check (up to 45 seconds)..."
             HEALTH_PASSED=false
-            for i in {1..6}; do
+            for i in {1..9}; do
               sleep 5
               HEALTH_RESPONSE=$(curl -s http://localhost:8080/health || echo "CONNECT_FAILED")
-              echo "🧪 Health Check Attempt $i/6: $HEALTH_RESPONSE"
+              echo "🧪 Health Check Attempt $i/9: $HEALTH_RESPONSE"
               if [[ "$HEALTH_RESPONSE" == *"healthy"* ]]; then
                 HEALTH_PASSED=true
                 break
