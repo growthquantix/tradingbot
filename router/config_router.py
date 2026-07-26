@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Dict
 
-from flask import json
+import json
 from services.config_service import ConfigService
 import logging
 
