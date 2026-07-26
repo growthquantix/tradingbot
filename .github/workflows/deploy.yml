@@ -71,13 +71,19 @@ jobs:
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
             
-            echo "⏳ Waiting 10 seconds for backend health check..."
-            sleep 10
+            echo "⏳ Waiting for backend health check (up to 30 seconds)..."
+            HEALTH_PASSED=false
+            for i in {1..6}; do
+              sleep 5
+              HEALTH_RESPONSE=$(curl -s http://localhost:8080/health || echo "CONNECT_FAILED")
+              echo "🧪 Health Check Attempt $i/6: $HEALTH_RESPONSE"
+              if [[ "$HEALTH_RESPONSE" == *"healthy"* ]]; then
+                HEALTH_PASSED=true
+                break
+              fi
+            done
             
-            HEALTH_RESPONSE=$(curl -s http://localhost:8080/health || echo "FAILED")
-            echo "🧪 Live Health Check Result: $HEALTH_RESPONSE"
-            
-            if [[ "$HEALTH_RESPONSE" == *"healthy"* ]]; then
+            if [ "$HEALTH_PASSED" = true ]; then
               echo "=========================================================="
               echo "🎉 SUCCESS: TradingBot is LIVE 24/7 & HEALTHY!"
               echo "=========================================================="
