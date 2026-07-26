@@ -19,9 +19,9 @@ RUN apt-get update && \
     tzdata && \
     rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies directly using pre-compiled binary wheels
+# Install python dependencies directly using pre-compiled binary wheels (CPU PyTorch)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
 
 # Install Playwright browsers and their system dependencies
 # CRITICAL: Install to a shared location and fix permissions for non-root user
