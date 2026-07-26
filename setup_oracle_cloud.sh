@@ -31,8 +31,9 @@ if [ ! -f ".env.production" ]; then
 fi
 
 # 3. Build & Launch Containers
-echo "🏗️ Building and starting Docker containers (Postgres, Redis, Backend)..."
-sudo docker compose -f docker-compose.prod.yml up -d --build
+echo "🏗️ Starting Docker containers (Postgres, Redis, Backend)..."
+sudo docker compose -f docker-compose.prod.yml pull || true
+sudo docker compose -f docker-compose.prod.yml up -d
 
 # 4. Wait for Database to initialize
 echo "⏳ Waiting 10 seconds for PostgreSQL database to stabilize..."
