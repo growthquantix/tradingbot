@@ -17,11 +17,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.50'
-          memory: 4096M
+          cpus: '1.20'
+          memory: 2048M
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '0.20'
+          memory: 256M
 
   db:
     image: postgres:13-alpine
@@ -37,11 +37,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.80'
-          memory: 2048M
+          cpus: '0.50'
+          memory: 1024M
         reservations:
-          cpus: '0.10'
-          memory: 256M
+          cpus: '0.05'
+          memory: 128M
 
   redis:
     image: redis:6-alpine
@@ -51,11 +51,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.30'
-          memory: 512M
+          cpus: '0.15'
+          memory: 256M
         reservations:
-          cpus: '0.05'
-          memory: 64M
+          cpus: '0.02'
+          memory: 32M
 
 volumes:
   postgres_data:
