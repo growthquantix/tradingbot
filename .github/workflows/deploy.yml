@@ -106,10 +106,23 @@ jobs:
               echo "=========================================================="
               echo "🎉 SUCCESS: TradingBot is LIVE 24/7 & HEALTHY!"
               echo "=========================================================="
+              
+              # Optional Telegram Alert on Success
+              curl -s -X POST "https://api.telegram.org/bot8397343536:AAHMxelpcSlRQnz_jkflvTWZJjjRLUZ7ONg/sendMessage" \
+                -d "chat_id=834049680" \
+                -d "text=🚀 *TradingBot Auto-Deployed Successfully!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: HEALTHY 🟢%0A*Endpoint*: https://141.148.198.8.nip.io/health" \
+                -d "parse_mode=Markdown" || true
             else
               echo "=========================================================="
               echo "❌ ERROR: Health check failed! Printing backend logs:"
               echo "=========================================================="
               sudo docker compose -f docker-compose.prod.yml logs --tail=100 backend
+              
+              # Telegram Alert on Failure
+              curl -s -X POST "https://api.telegram.org/bot8397343536:AAHMxelpcSlRQnz_jkflvTWZJjjRLUZ7ONg/sendMessage" \
+                -d "chat_id=834049680" \
+                -d "text=🚨 *TradingBot Auto-Deployment FAILED!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: UNHEALTHY 🔴" \
+                -d "parse_mode=Markdown" || true
+              
               exit 1
             fi
