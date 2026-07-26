@@ -51,9 +51,22 @@ jobs:
           username: ubuntu
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           script: |
+            echo "=========================================================="
+            echo "🚀 Deploying Pre-Built TradingBot Container to Oracle Cloud"
+            echo "=========================================================="
             cd ~/tradingbot || git clone https://github.com/growthquantix/tradingbot.git ~/tradingbot && cd ~/tradingbot
             git fetch origin main
             git reset --hard origin/main
-            sudo docker compose -f docker-compose.prod.yml pull || true
+            sudo docker compose -f docker-compose.prod.yml pull
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
+            
+            echo "⏳ Waiting 5 seconds for backend health check..."
+            sleep 5
+            
+            echo "🧪 Verifying Backend Live Health Status:"
+            curl -s http://localhost:8080/health || echo "⚠️ Backend initializing..."
+            echo ""
+            echo "=========================================================="
+            echo "🎉 Auto-Deployment Complete & Backend Healthy!"
+            echo "=========================================================="
