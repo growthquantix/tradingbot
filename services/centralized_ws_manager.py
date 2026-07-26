@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Import Redis manager with error handling
 try:
-    from services.trading_red import TradingSafeRedisManager
+    from services.trading_redis_manager import TradingSafeRedisManager
 
     redis_manager = TradingSafeRedisManager()
 except ImportError as e:
