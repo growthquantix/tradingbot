@@ -1,0 +1,11 @@
+{
+  "weights": [
+    0.5206,
+    0.1386,
+    0.1073,
+    0.2335
+  ],
+  "source": "Transformer_Encoder_Decoder",
+  "sequence_length": 60,
+  "updated_at": "Sat 07/25/2026"
+}

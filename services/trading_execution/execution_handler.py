@@ -149,19 +149,67 @@ class TradeExecutionHandler:
                 metadata={"error": "Invalid Stop Loss"},
             )
 
-        try:
-            trading_mode = TradingMode(prepared_trade.trading_mode)
+        # 0. CRITICAL KILL SWITCH & RECOVERY CHECK
+        from services.trading_execution.trading_kill_switch import trading_kill_switch
+        if not trading_kill_switch.can_execute_new_trade():
+            logger.error("Safety Block: Trade entry blocked by Active Trading Kill Switch")
+            return ExecutionResult(
+                success=False,
+                trade_id="",
+                order_id=None,
+                entry_price=Decimal("0"),
+                quantity=0,
+                status="BLOCKED",
+                message="Trade blocked by active kill switch",
+                trade_execution_id=None,
+                active_position_id=None,
+                timestamp=get_ist_isoformat(),
+                metadata={"error": "Kill switch active"},
+            )
+
+        # Create unique trade intent ID for idempotency
+        from services.trading_execution.order_lifecycle_service import order_lifecycle_service, OrderState
+        intent_id = order_lifecycle_service.create_trade_intent(
+            user_id=prepared_trade.user_id,
+            symbol=prepared_trade.stock_symbol,
+            option_type=prepared_trade.option_type,
+            quantity=prepared_trade.position_size_lots * prepared_trade.lot_size
+        )
+        order_lifecycle_service.transition_state(intent_id, OrderState.VALIDATED)
+
+        trading_mode = TradingMode(prepared_trade.trading_mode)
+
+        # HARD SAFETY ASSERTION: SHADOW MODE MUST NEVER PLACE BROKER ORDERS
+        if trading_mode == TradingMode.SHADOW:
+            logger.info(f"🔮 SHADOW MODE ASSERTION: Intercepting trade decision for {prepared_trade.stock_symbol} ({prepared_trade.option_type}). NO REAL ORDERS DISPATCHED.")
+            from services.validation.shadow_trading_service import shadow_trading_service
+            shadow_result = shadow_trading_service.record_decision(prepared_trade)
+            return ExecutionResult(
+                success=True,
+                trade_id=shadow_result.get("decision_id", "SHADOW_DECISION"),
+                order_id=None,
+                entry_price=prepared_trade.entry_price,
+                quantity=prepared_trade.position_size_lots * prepared_trade.lot_size,
+                status="SHADOW_RECORDED",
+                message="Decision recorded in SHADOW mode. Zero broker orders placed.",
+                trade_execution_id=None,
+                active_position_id=None,
+                timestamp=get_ist_isoformat(),
+                metadata=shadow_result
+            )
             
+        try:
             if trading_mode == TradingMode.PAPER:
                 return self._execute_paper_trade(
                     prepared_trade,
                     db,
+                    intent_id=intent_id,
                     broker_name=broker_name,
                     broker_id=broker_id,
                     allocated_capital=allocated_capital,
                 )
             else:
-                return self._execute_live_trade(prepared_trade, db)
+                return self._execute_live_trade(prepared_trade, db, intent_id=intent_id)
 
         except Exception as e:
             logger.error(f"Error executing trade: {e}")
@@ -183,6 +231,7 @@ class TradeExecutionHandler:
         self,
         prepared_trade: PreparedTrade,
         db: Session,
+        intent_id: Optional[str] = None,
         broker_name: Optional[str] = None,
         broker_id: Optional[int] = None,
         allocated_capital: Optional[float] = None,
@@ -350,18 +399,15 @@ class TradeExecutionHandler:
             raise
 
     def _execute_live_trade(
-        self, prepared_trade: PreparedTrade, db: Session
+        self, prepared_trade: PreparedTrade, db: Session, intent_id: Optional[str] = None
     ) -> ExecutionResult:
         """
         Execute live trade via broker API
-
-        Args:
-            prepared_trade: Prepared trade details
-            db: Database session
-
-        Returns:
-            ExecutionResult with real execution details
         """
+        from services.trading_execution.order_lifecycle_service import order_lifecycle_service, OrderState
+        if intent_id:
+            order_lifecycle_service.transition_state(intent_id, OrderState.SUBMITTING)
+
         try:
             # Get broker configuration
             broker_config = (
@@ -387,9 +433,22 @@ class TradeExecutionHandler:
             order_result = self._place_broker_order(broker_config, prepared_trade, db)
 
             if not order_result.get("success"):
+                if intent_id:
+                    order_lifecycle_service.transition_state(intent_id, OrderState.REJECTED)
                 raise ValueError(
                     f"Order placement failed: {order_result.get('message')}"
                 )
+
+            broker_order_id = order_result.get("order_id")
+            if intent_id:
+                order_lifecycle_service.transition_state(intent_id, OrderState.ACKNOWLEDGED, {"broker_order_id": broker_order_id})
+                # Check status field from broker response
+                broker_status = str(order_result.get("status", "")).upper()
+                if broker_status in ("COMPLETE", "FILLED", "EXECUTED"):
+                    order_lifecycle_service.transition_state(intent_id, OrderState.FILLED)
+                    order_lifecycle_service.record_fill(intent_id, broker_order_id, prepared_trade.position_size_lots * prepared_trade.lot_size, prepared_trade.entry_price)
+                else:
+                    logger.warning(f"⚠️ Live order {broker_order_id} ACKNOWLEDGED but not yet confirmed FILLED (status={broker_status})")
 
             broker_order_id = order_result.get("order_id")
             actual_entry_price = Decimal(

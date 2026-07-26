@@ -22,7 +22,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
           script: |
-            cd tradingbot || git clone https://github.com/growthquantix/tradingbot.git tradingbot && cd tradingbot
-            git pull origin feature-branch
-            docker-compose up -d --build
-            docker system prune -f
+            cd ~/tradingbot || git clone https://github.com/growthquantix/tradingbot.git ~/tradingbot && cd ~/tradingbot
+            git pull origin main
+            sudo docker compose -f docker-compose.prod.yml up -d --build
+            sudo docker image prune -f

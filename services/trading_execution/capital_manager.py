@@ -20,6 +20,7 @@ class TradingMode(Enum):
     """Trading mode configuration"""
     PAPER = "paper"
     LIVE = "live"
+    SHADOW = "shadow"
 
 
 class InsufficientCapitalError(ValueError):
