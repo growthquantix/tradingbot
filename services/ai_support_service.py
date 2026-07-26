@@ -20,9 +20,7 @@ class AISupportService:
                     if file.endswith(".md"):
                         try:
                             with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
-                                docs_content += f"
---- {file} ---
-" + f.read()
+                                docs_content += f"\n--- {file} ---\n" + f.read()
                         except:
                             pass
         return docs_content[:20000] # Limit for Gemini context window
@@ -34,12 +32,9 @@ class AISupportService:
             return "User not found."
             
         trades = db.query(TradeHistory).filter(TradeHistory.user_id == user.id).order_by(TradeHistory.exit_time.desc()).limit(3).all()
-        context = f"User Email: {user_email}
-Recent Trades:
-"
+        context = f"User Email: {user_email}\nRecent Trades:\n"
         for t in trades:
-            context += f"- {t.symbol}: Side={t.signal}, Entry={t.entry_price}, Exit={t.exit_price}, PnL={t.pnl}, Reason={t.exit_reason}
-"
+            context += f"- {t.symbol}: Side={t.signal}, Entry={t.entry_price}, Exit={t.exit_price}, PnL={t.pnl}, Reason={t.exit_reason}\n"
         return context
 
     def answer_query(self, query: str, user_email: str = None):

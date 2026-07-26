@@ -123,7 +123,7 @@ class LiveTradingEngine:
             logger.error(f"❌ Failed to add strategy {config.name}: {e}")
             return False
     
-    def remove_strategy(self, strategy_name: str) -> bool:
+    async def remove_strategy(self, strategy_name: str) -> bool:
         """Remove a strategy from execution"""
         try:
             if strategy_name in self.strategies:
