@@ -41,6 +41,9 @@ jobs:
     name: Fast Deploy Pre-Built Image to Oracle Cloud (0% Server CPU)
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - name: SSH & Deploy Pre-Built Container to Oracle Cloud Instance
@@ -53,6 +56,6 @@ jobs:
             cd ~/tradingbot || git clone https://github.com/growthquantix/tradingbot.git ~/tradingbot && cd ~/tradingbot
             git fetch origin main
             git reset --hard origin/main
-            sudo docker compose -f docker-compose.prod.yml pull
+            sudo docker compose -f docker-compose.prod.yml pull || true
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f

@@ -3,7 +3,6 @@ version: '3.8'
 services:
   backend:
     image: ghcr.io/growthquantix/tradingbot:latest
-    build: .
     restart: always
     ports:
       - "${PORT:-8002}:8000"
