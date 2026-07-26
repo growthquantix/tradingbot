@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-and-push:
-    name: Build Docker Image on GitHub & Push to GHCR
+    name: Validate Code & Build Docker Image on GitHub
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,6 +17,16 @@ jobs:
     steps:
       - name: Checkout Codebase
         uses: actions/checkout@v4
+
+      - name: Set up Python for Syntax Validation
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify Python Code Syntax
+        run: |
+          python -m py_compile app.py
+          echo "✅ Code syntax validation passed!"
 
       - name: Log in to GitHub Container Registry (GHCR)
         uses: docker/login-action@v3
@@ -39,12 +49,12 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy-oracle:
-    name: Fast Deploy Pre-Built Image to Oracle Cloud (0% Server CPU)
+    name: Fast Deploy & Verify Health on Oracle Cloud
     needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH & Deploy Pre-Built Container to Oracle Cloud Instance
+      - name: SSH, Deploy & Validate Live Backend Health
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.ORACLE_SERVER_IP }}
@@ -61,12 +71,20 @@ jobs:
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
             
-            echo "⏳ Waiting 5 seconds for backend health check..."
-            sleep 5
+            echo "⏳ Waiting 10 seconds for backend health check..."
+            sleep 10
             
-            echo "🧪 Verifying Backend Live Health Status:"
-            curl -s http://localhost:8080/health || echo "⚠️ Backend initializing..."
-            echo ""
-            echo "=========================================================="
-            echo "🎉 Auto-Deployment Complete & Backend Healthy!"
-            echo "=========================================================="
+            HEALTH_RESPONSE=$(curl -s http://localhost:8080/health || echo "FAILED")
+            echo "🧪 Live Health Check Result: $HEALTH_RESPONSE"
+            
+            if [[ "$HEALTH_RESPONSE" == *"healthy"* ]]; then
+              echo "=========================================================="
+              echo "🎉 SUCCESS: TradingBot is LIVE 24/7 & HEALTHY!"
+              echo "=========================================================="
+            else
+              echo "=========================================================="
+              echo "❌ ERROR: Health check failed! Printing backend logs:"
+              echo "=========================================================="
+              sudo docker compose -f docker-compose.prod.yml logs --tail=100 backend
+              exit 1
+            fi
