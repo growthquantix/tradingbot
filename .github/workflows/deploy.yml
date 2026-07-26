@@ -107,11 +107,10 @@ jobs:
             cd ~/tradingbot || git clone https://github.com/growthquantix/tradingbot.git ~/tradingbot && cd ~/tradingbot
             git fetch origin main
             git reset --hard origin/main
-            sudo docker compose -f docker-compose.prod.yml pull
-            sudo docker compose -f docker-compose.prod.yml stop backend || true
-            sudo docker compose -f docker-compose.prod.yml rm -f backend || true
-            sudo docker compose -f docker-compose.prod.yml up -d
-            sudo docker image prune -f
+            nice -n 19 sudo docker compose -f docker-compose.prod.yml pull
+            nice -n 19 sudo docker compose -f docker-compose.prod.yml stop backend || true
+            nice -n 19 sudo docker compose -f docker-compose.prod.yml rm -f backend || true
+            nice -n 19 sudo docker compose -f docker-compose.prod.yml up -d
             
             echo "⏳ Waiting for backend health check (up to 45 seconds)..."
             HEALTH_PASSED=false
