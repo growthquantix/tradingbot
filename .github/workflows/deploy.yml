@@ -90,6 +90,7 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             sudo docker compose -f docker-compose.prod.yml pull
+            sudo docker compose -f docker-compose.prod.yml down --remove-orphans || true
             sudo docker compose -f docker-compose.prod.yml up -d
             sudo docker image prune -f
             
