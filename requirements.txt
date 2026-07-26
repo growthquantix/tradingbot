@@ -63,5 +63,6 @@ cryptography==44.0.2
 python-dotenv==1.0.1
 pytz==2025.1
 schedule==1.2.2
+psutil==7.0.0
 pyTelegramBotAPI
 python-telegram-bot
