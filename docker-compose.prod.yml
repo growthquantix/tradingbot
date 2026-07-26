@@ -5,7 +5,7 @@ services:
     image: ghcr.io/growthquantix/tradingbot:latest
     restart: always
     ports:
-      - "${PORT:-8002}:8000"
+      - "${PORT:-8080}:8000"
     env_file:
       - .env.production
     environment:
@@ -19,8 +19,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2.50'
-          memory: 8192M
+          cpus: '1.50'
+          memory: 4096M
         reservations:
           cpus: '0.25'
           memory: 512M
@@ -39,7 +39,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.00'
+          cpus: '0.80'
           memory: 2048M
         reservations:
           cpus: '0.10'
@@ -53,7 +53,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.50'
+          cpus: '0.30'
           memory: 512M
         reservations:
           cpus: '0.05'
