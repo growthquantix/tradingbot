@@ -9,6 +9,10 @@ services:
     environment:
       - DATABASE_URL=postgresql://trading_user:trading_password@db:5432/trading_db
       - REDIS_HOST=redis
+      - OMP_NUM_THREADS=1
+      - OPENBLAS_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
+      - TORCH_NUM_THREADS=1
     depends_on:
       - db
       - redis
