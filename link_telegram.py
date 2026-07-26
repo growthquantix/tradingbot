@@ -1,4 +1,5 @@
 
+import os
 from database.connection import SessionLocal
 from database.models import User
 
@@ -21,6 +22,6 @@ def link_account(email, chat_id):
 if __name__ == "__main__":
     # REPLACE with your login email
     MY_EMAIL = "your_email@example.com" 
-    MY_CHAT_ID = "834049680"
+    MY_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "YOUR_TELEGRAM_CHAT_ID")
     
     link_account(MY_EMAIL, MY_CHAT_ID)

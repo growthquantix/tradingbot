@@ -75,6 +75,9 @@ jobs:
     steps:
       - name: SSH, Deploy & Validate Live Backend Health
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         with:
           host: ${{ secrets.ORACLE_SERVER_IP }}
           username: ubuntu
@@ -107,22 +110,24 @@ jobs:
               echo "🎉 SUCCESS: TradingBot is LIVE 24/7 & HEALTHY!"
               echo "=========================================================="
               
-              # Optional Telegram Alert on Success
-              curl -s -X POST "https://api.telegram.org/bot8397343536:AAHMxelpcSlRQnz_jkflvTWZJjjRLUZ7ONg/sendMessage" \
-                -d "chat_id=834049680" \
-                -d "text=🚀 *TradingBot Auto-Deployed Successfully!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: HEALTHY 🟢%0A*Endpoint*: https://141.148.198.8.nip.io/health" \
-                -d "parse_mode=Markdown" || true
+              if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -d "text=🚀 *TradingBot Auto-Deployed Successfully!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: HEALTHY 🟢%0A*Endpoint*: https://141.148.198.8.nip.io/health" \
+                  -d "parse_mode=Markdown" || true
+              fi
             else
               echo "=========================================================="
               echo "❌ ERROR: Health check failed! Printing backend logs:"
               echo "=========================================================="
               sudo docker compose -f docker-compose.prod.yml logs --tail=100 backend
               
-              # Telegram Alert on Failure
-              curl -s -X POST "https://api.telegram.org/bot8397343536:AAHMxelpcSlRQnz_jkflvTWZJjjRLUZ7ONg/sendMessage" \
-                -d "chat_id=834049680" \
-                -d "text=🚨 *TradingBot Auto-Deployment FAILED!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: UNHEALTHY 🔴" \
-                -d "parse_mode=Markdown" || true
+              if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
+                curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -d "text=🚨 *TradingBot Auto-Deployment FAILED!*%0A%0A*Commit*: \`$(git rev-parse --short HEAD)\`%0A*Status*: UNHEALTHY 🔴" \
+                  -d "parse_mode=Markdown" || true
+              fi
               
               exit 1
             fi
