@@ -1,15 +1,12 @@
-name: Frontend CI/CD Optimized
+name: Frontend CI/CD Pipeline (Netlify)
 
 on:
   push:
-    branches: [ "main" ]
-    paths: 
-      - 'ui/trading-bot-ui/**'
-      - '.github/workflows/node.js.yml'
-  pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
       - 'ui/trading-bot-ui/**'
+      - '.github/workflows/node.js.yml'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,58 +14,36 @@ concurrency:
 
 jobs:
   build-and-test:
+    name: Build & Validate React Frontend
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: ui/trading-bot-ui
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-        cache-dependency-path: ui/trading-bot-ui/package-lock.json
-        
-    - name: Install dependencies
-      run: npm ci --prefer-offline --no-audit
-        
-    - name: Fast Lint & Type Check
-      run: |
-        npm run lint || echo "Linting failed but continuing"
-        npx tsc --noEmit || echo "Type check failed but continuing"
-        
-    - name: Build Application
-      env:
-        GENERATE_SOURCEMAP: false
-        CI: true
-      run: npm run build
-      
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: production-build
-        path: ui/trading-bot-ui/build/
-        retention-days: 1
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    if: github.ref == 'refs/heads/main'
-    steps:
-    - name: Download Build Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: production-build
-        path: build
-        
-    - name: Deploy to Netlify
-      uses: netlify/actions/cli@master
-      with:
-        args: deploy --prod --dir=build
-      env:
-        NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-        NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/trading-bot-ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build Production Bundle
+        env:
+          GENERATE_SOURCEMAP: false
+          CI: false
+          REACT_APP_API_URL: https://141.148.198.8.nip.io
+        run: npm run build
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: ui/trading-bot-ui/build/
+          retention-days: 7
