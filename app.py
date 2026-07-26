@@ -735,7 +735,11 @@ async def lifespan(app: FastAPI):
         try:
 
             async def start_upstox_in_background():
-                """Start Upstox automation in background to avoid blocking startup"""
+                """Start Upstox automation in background only if enabled via env var"""
+                if os.getenv("ENABLE_UPSTOX_PLAYWRIGHT_AUTOMATION", "false").lower() != "true":
+                    logger.info("ℹ️ Upstox Playwright browser automation disabled by default (set ENABLE_UPSTOX_PLAYWRIGHT_AUTOMATION=true to enable)")
+                    return
+
                 try:
                     # Reduced wait time to ensure it starts reliably and visibly
                     logger.debug(
