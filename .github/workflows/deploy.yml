@@ -34,6 +34,10 @@ jobs:
           echo "✅ Code syntax validation passed!"
 
       - name: Audit All 20+ Routers & Third-Party Dependencies
+        env:
+          DATABASE_URL: postgresql://trading_user:trading_password@localhost:5432/trading_db
+          JWT_SECRET_KEY: test-ci-secret-key-32-chars-long
+          SECRET_KEY: test-ci-secret-key-32-chars-long
         run: |
           pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
           python -c "import app; print('==========================================================\n✅ ENTERPRISE AUDIT PASSED: All 20+ routers and dependencies imported cleanly with 0 errors!\n==========================================================')"
@@ -55,7 +59,7 @@ jobs:
 
       - name: Perform Container Runtime Dry-Run Test
         run: |
-          docker run --rm tradingbot-test:latest python -c "import app; print('==========================================================\n✅ CONTAINER RUNTIME DRY-RUN PASSED: Container runtime environment and code execution 100% verified!\n==========================================================')"
+          docker run --rm -e DATABASE_URL=postgresql://trading_user:trading_password@localhost:5432/trading_db tradingbot-test:latest python -c "import app; print('==========================================================\n✅ CONTAINER RUNTIME DRY-RUN PASSED: Container runtime environment and code execution 100% verified!\n==========================================================')"
 
       - name: Build and Push Final Verified Image to GHCR
         uses: docker/build-push-action@v5
