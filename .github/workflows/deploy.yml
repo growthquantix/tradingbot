@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build-and-push:
@@ -41,9 +42,6 @@ jobs:
     name: Fast Deploy Pre-Built Image to Oracle Cloud (0% Server CPU)
     needs: build-and-push
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
 
     steps:
       - name: SSH & Deploy Pre-Built Container to Oracle Cloud Instance
