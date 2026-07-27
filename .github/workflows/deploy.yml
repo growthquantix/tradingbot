@@ -107,6 +107,18 @@ jobs:
             cd ~/tradingbot || git clone https://github.com/growthquantix/tradingbot.git ~/tradingbot && cd ~/tradingbot
             git fetch origin main
             git reset --hard origin/main
+            if [ ! -f .env.production ]; then
+              echo "Creating initial .env.production file..."
+              cat << 'EOF' > .env.production
+ENVIRONMENT=production
+PORT=8000
+DATABASE_URL=postgresql://trading_user:trading_password@db:5432/trading_db
+REDIS_HOST=redis
+JWT_SECRET_KEY=test-ci-secret-key-32-chars-long
+SECRET_KEY=test-ci-secret-key-32-chars-long
+ENABLE_UPSTOX_PLAYWRIGHT_AUTOMATION=false
+EOF
+            fi
             nice -n 19 sudo docker compose -f docker-compose.prod.yml pull
             nice -n 19 sudo docker compose -f docker-compose.prod.yml stop backend || true
             nice -n 19 sudo docker compose -f docker-compose.prod.yml rm -f backend || true
