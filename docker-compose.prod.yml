@@ -21,11 +21,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.90'
-          memory: 1536M
+          cpus: '1.50'
+          memory: 8192M
         reservations:
-          cpus: '0.10'
-          memory: 256M
+          cpus: '0.20'
+          memory: 1024M
 
   db:
     image: postgres:13-alpine
