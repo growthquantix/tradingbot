@@ -2,6 +2,7 @@
 import asyncio
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import ssl
 import websockets.connection
@@ -16,7 +17,9 @@ logger = logging.getLogger("ws_relay")
 
 def get_market_data_feed_authorize_v3():
     """Get authorization for market data feed."""
-    access_token = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIzREM5RTIiLCJqdGkiOiI2OGY5YTM4Y2I0MTBmNzBmODlmMjg2OGMiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaXNQbHVzUGxhbiI6dHJ1ZSwiaWF0IjoxNzYxMTkwNzk2LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3NjEyNTY4MDB9.uo8teqTFR_Hn3G_CVprKiZXCvQyZ44U0zuDGZCofKng"
+    access_token = os.getenv("UPSTOX_ACCESS_TOKEN")
+    if not access_token:
+        raise RuntimeError("UPSTOX_ACCESS_TOKEN is not set; export a current Upstox access token")
     headers = {"Accept": "application/json", "Authorization": f"Bearer {access_token}"}
     url = "https://api.upstox.com/v3/feed/market-data-feed/authorize"
     api_response = requests.get(url=url, headers=headers)
